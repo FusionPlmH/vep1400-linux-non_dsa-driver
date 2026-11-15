@@ -134,12 +134,18 @@ sudo ./install.sh --userspace  # 或强制用户态
 
 ## 支持的系统
 
-| | |
-|---|---|
-| 硬件 | Dell VEP1400 / VMware SD-WAN Edge 610（非 X） |
-| 内核模块 | Debian 12/13、Ubuntu 22.04/24.04、Proxmox VE 8/9；内核 5.15–6.x + `linux-headers-$(uname -r)` |
-| 用户态 | 上面全部，另加 VyOS 1.3.4（内核 5.4）等无编译器系统 |
-| 不支持 | Edge 610X / VEP1400-X（C3558），交换机配置不同 |
+| 系统 | `install.sh` 默认选择 | 额外依赖 | 验证状态 |
+|---|---|---|---|
+| Debian 13 | 内核模块 | `linux-headers-$(uname -r)` + `dkms` | ✅ 实测（13.7 / 内核 6.12） |
+| Debian 12 | 内核模块 | 同上 | 预计可用（内核 6.1，未实测） |
+| Ubuntu 22.04 / 24.04 | 内核模块 | 同上 | 预计可用（内核 5.15 / 6.8，未实测） |
+| Proxmox VE 8 / 9 | 内核模块 | `pve-headers-$(uname -r)` + `dkms` | 预计可用（未实测） |
+| VyOS 1.3.4 | 用户态 | `python3` + 可读 `/dev/mem` | ✅ 实测（1.3.4 / 内核 5.4.261） |
+| 其它 systemd 发行版 | 用户态 | 同上 | 未实测 |
+
+- 任何系统都可以 `--userspace` 强制用户态：不需要编译器，也不需要内核头文件。
+- 硬件只支持 **Dell VEP1400 / VMware SD-WAN Edge 610 非 X（Atom C3308）**。
+  Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支持。
 
 ## 端口映射
 

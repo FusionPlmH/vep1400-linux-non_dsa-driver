@@ -145,12 +145,20 @@ Both drive the same register sequences and reach the same throughput. Use
 
 ## Supported systems
 
-| | |
-|---|---|
-| Hardware | Dell VEP1400 / VMware SD-WAN Edge 610 (non-X) |
-| Kernel module | Debian 12/13, Ubuntu 22.04/24.04, Proxmox VE 8/9; kernel 5.15–6.x + `linux-headers-$(uname -r)` |
-| Userspace | all of the above, plus VyOS 1.3.4 (kernel 5.4) and similar systems without a compiler |
-| Not supported | Edge 610X / VEP1400-X (C3558) — different switch configuration |
+| System | `install.sh` picks | Also needs | Status |
+|---|---|---|---|
+| Debian 13 | kernel module | `linux-headers-$(uname -r)` + `dkms` | ✅ tested (13.7 / kernel 6.12) |
+| Debian 12 | kernel module | same | expected to work (kernel 6.1, untested) |
+| Ubuntu 22.04 / 24.04 | kernel module | same | expected to work (kernel 5.15 / 6.8, untested) |
+| Proxmox VE 8 / 9 | kernel module | `pve-headers-$(uname -r)` + `dkms` | expected to work (untested) |
+| VyOS 1.3.4 | userspace | `python3` + readable `/dev/mem` | ✅ tested (1.3.4 / kernel 5.4.261) |
+| other systemd distributions | userspace | same | untested |
+
+- Any system can force the userspace implementation with `--userspace`: no
+  compiler and no kernel headers required.
+- Hardware support is limited to the **Dell VEP1400 / VMware SD-WAN Edge 610
+  non-X (Atom C3308)**. The Edge 610X / VEP1400-X uses a C3558 and a different
+  switch configuration, which this version does not handle.
 
 ## Port map
 
