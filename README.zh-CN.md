@@ -123,8 +123,10 @@ wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dri
 | `VEP1400_REF` | `main` | 要下载的分支 |
 | `VEP1400_TARBALL` | *（未设置）* | 完整归档地址（`.tar.gz` 或 `.zip`），优先级最高 |
 
+**镜像** —— <https://neodev.team/vep1400-linux-non_dsa-driver.zip> 是本仓库的完整
+副本。GitHub 慢或打不开时用它，同一条命令，只是把 `VEP1400_TARBALL` 指过去：
+
 ```sh
-# 自建镜像，tar.gz 或 zip 都支持
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 

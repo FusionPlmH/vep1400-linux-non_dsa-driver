@@ -131,8 +131,11 @@ environment variables if you mirror the project somewhere else:
 | `VEP1400_REF` | `main` | branch to download |
 | `VEP1400_TARBALL` | *(unset)* | full archive URL (`.tar.gz` or `.zip`), overrides both |
 
+**Mirror** — <https://neodev.team/vep1400-linux-non_dsa-driver.zip> is a full copy
+of this repository. Use it when GitHub is slow or blocked; the same one-liner
+just points `VEP1400_TARBALL` at it:
+
 ```sh
-# a mirror you host yourself, tarball or zip
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 
