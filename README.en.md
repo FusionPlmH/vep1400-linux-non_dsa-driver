@@ -21,8 +21,8 @@ panel port), powers the six PHYs up once and then leaves them entirely to
 autonegotiation — plug a cable and it behaves like any other NIC. It also
 disarms the PIC watchdog and enables SFP TX.
 
-Measured on real hardware: all six ports at 1000 Mb/s, **918–926 Mbit/s** of TCP
-payload per port.
+Tested on real hardware: all six ports negotiate 1000 Mb/s (Debian 13 and VyOS
+1.3.4).
 
 ## Quick start
 
@@ -84,21 +84,13 @@ ip route get 1.1.1.1        # which interface the default route leaves through
 ping -c1 deb.debian.org     # resolves and replies -> link, route and DNS are fine
 ```
 
-Then the one-liner. The implementation is **chosen automatically**: Debian /
-Ubuntu / PVE get the kernel module, VyOS gets the userspace one (it has no
-compiler and no kernel headers):
+Then the one-liner (the implementation is chosen automatically; VyOS gets the
+userspace one):
 
 ```sh
 GET=https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh
 curl -fsSL $GET | sudo bash                     # automatic
-curl -fsSL $GET | sudo bash -s -- --userspace   # force userspace (see the table)
-```
-
-No `curl`? Replace `curl -fsSL $GET` with `wget -qO- $GET`. GitHub slow? Use the
-mirror (`VEP1400_TARBALL` points at a full archive):
-
-```sh
-curl -fsSL $GET | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
+curl -fsSL $GET | sudo bash -s -- --userspace   # force userspace
 ```
 
 With git:
@@ -106,7 +98,7 @@ With git:
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh              # automatic; add --userspace to force the tool
+sudo ./install.sh
 ```
 
 | Option | Effect |
@@ -163,6 +155,10 @@ Both drive the same register sequences and reach the same throughput. Use
 
 `GE*` inherit their uplink's MAC plus a per-port offset (`+0x0a`…`+0x0f`).
 
+> The uplinks have different names per system: Debian / PVE use the predictable
+> names `eno1`/`eno2` (SFP cages `eno3`/`eno4`), while VyOS passes
+> `net.ifnames=0` and calls them `eth0`/`eth1` (SFP cages `eth2`/`eth3`).
+
 ## Using the ports
 
 **Debian / Proxmox VE** (ifupdown):
@@ -186,7 +182,7 @@ save
 
 True on both:
 
-- **Never** put an address on `eno1`/`eno2` — they are the tagged internal uplinks
+- **Never** put an address on the uplinks themselves — `eno1`/`eno2` on Debian / PVE, `eth0`/`eth1` on VyOS
 - **Never** bridge two ports — they already share a broadcast domain, that loops
 - Two ports on one subnet is fine; the driver sets `arp_ignore=1` / `arp_announce=2`
 
@@ -271,22 +267,25 @@ KR PHY nor the 88E6190 2500BASE-X PCS completes autonegotiation).
 </details>
 
 <details>
-<summary><b>How the 1G link works (and what went wrong before)</b></summary>
+<summary><b>What the PHY init does</b></summary>
 
-- **The board strap is wrong**: after reset the PHYs come up with `1000BASE-T
-  control (0x09) = 0x0e00`, i.e. manual master *and* manual slave — an invalid
-  combination, so autonegotiation never completes. The driver rewrites it to
-  `0x0200` (automatic).
-- **The PHYs are powered down**: `BMCR = 0x1940`; the driver powers them up with
-  `BMCR = 0x1140 | AN_RESTART`.
-- **They are written exactly once, at load time**: every `BMCR` write restarts
-  autonegotiation, so a driver that "helps" on cable insertion keeps killing the
-  negotiation. An earlier fallback/forcing state machine did exactly that and made
-  1G unreliable; it is gone. The link monitor is read-only.
-- **Some peers need 6–12 s** — normal for 1000BASE-T, not a driver problem.
-- Measured: 899–909 Mbit/s between two front panel ports, 927–931 Mbit/s to an
-  RTL8153, 911–926 Mbit/s over 400 MB TCP; the VLAN split costs nothing
-  measurable.
+After reset the front panel PHYs are **powered down** (`BMCR` reads back `0x1940`),
+so the driver has to power them up explicitly or there is never a link. At load
+time it writes, once per PHY:
+
+- the DiagOS init sequence (page `0xf8`, reg `0x14`)
+- `1000BASE-T control (0x09) = 0x0200`: advertise 1000BASE-T full duplex and let
+  autonegotiation pick master/slave. The board default is `0x0e00`, where bit 11
+  only expresses a *preference* for master and does not prevent negotiation
+- `BMCR = 0x1140 | AN_RESTART`: power up and start autonegotiation once
+
+Nothing writes a PHY register afterwards, only the read-only link monitor —
+every `BMCR` write restarts autonegotiation. Some peers need 6–12 s to finish,
+which is normal for 1000BASE-T.
+
+If a port only reaches 100M, check the **cable and the peer port** first: both a
+bad cable and a router LAN port that turned out not to be gigabit were measured
+on this unit, neither had anything to do with the driver.
 
 </details>
 

@@ -19,7 +19,7 @@
 「一个前面板口一个 VLAN」；6 个 PHY 只上电初始化一次，之后完全交给自协商 ——
 插线即用，行为和普通网卡一样。同时关闭 PIC 看门狗、打开 SFP 发射。
 
-实测：六个口全部 1000 Mb/s，单口 TCP 有效载荷 **918–926 Mb/s**。
+实测：六个口全部协商到 1000 Mb/s（Debian 13 与 VyOS 1.3.4 双系统验证）。
 
 ## 快速开始
 
@@ -77,20 +77,12 @@ ip route get 1.1.1.1        # 默认路由经哪个口出去
 ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 ```
 
-然后一行命令装。**实现按系统自动选择**：Debian / Ubuntu / PVE 用内核模块，VyOS
-自动走用户态（它没有编译器，也没有内核头文件）：
+然后一行命令装（实现按系统自动选择，VyOS 走用户态）：
 
 ```sh
 GET=https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh
 curl -fsSL $GET | sudo bash                     # 自动选择
-curl -fsSL $GET | sudo bash -s -- --userspace   # 强制用户态（其它选项见下表）
-```
-
-没有 `curl` 就把 `curl -fsSL $GET` 换成 `wget -qO- $GET`；GitHub 慢就换镜像
-（`VEP1400_TARBALL` 指向完整归档）：
-
-```sh
-curl -fsSL $GET | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
+curl -fsSL $GET | sudo bash -s -- --userspace   # 强制用户态
 ```
 
 用 git：
@@ -98,7 +90,7 @@ curl -fsSL $GET | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh              # 自动选择；加 --userspace 强制用户态
+sudo ./install.sh
 ```
 
 | 选项 | 作用 |
@@ -151,6 +143,10 @@ sudo ./install.sh              # 自动选择；加 --userspace 强制用户态
 
 `GE*` 的 MAC 取自对应上行口并加偏移（`+0x0a`…`+0x0f`），保证唯一。
 
+> 上行口的名字随系统不同：Debian / PVE 用 systemd 可预测命名，是 `eno1`/`eno2`
+> （SFP 为 `eno3`/`eno4`）；VyOS 用 `net.ifnames=0`，是 `eth0`/`eth1`
+> （SFP 为 `eth2`/`eth3`）。
+
 ## 使用端口
 
 **Debian / Proxmox VE**（ifupdown）：
@@ -174,7 +170,7 @@ save
 
 两种系统都适用：
 
-- **不要**给 `eno1`/`eno2` 配地址 —— 它们是带标签的内部上行口
+- **不要**给上行口本身配地址 —— Debian / PVE 上是 `eno1`/`eno2`，VyOS 上是 `eth0`/`eth1`
 - **不要**把两个 `GE*`（VyOS 上是两个 vif）桥接 —— 它们在交换机里本就同广播域，桥接会成环
 - 同网段多口是允许的，驱动已给 `GE*` 设好 `arp_ignore=1` / `arp_announce=2`
 
@@ -253,17 +249,21 @@ Debian、Ubuntu、PVE、VyOS 的内核都是 `# CONFIG_NET_DSA is not set`（VyO
 </details>
 
 <details>
-<summary><b>原理：1G 协商踩过的坑</b></summary>
+<summary><b>PHY 初始化做了什么</b></summary>
 
-- **板子 strap 是错的**：PHY 复位后 `1000BASE-T 控制 (0x09) = 0x0e00`，同时置了
-  手动 master 和手动 slave，非法组合，自协商永远不完成。驱动改写成 `0x0200`（自动）。
-- **PHY 默认下电**：`BMCR = 0x1940`，驱动用 `BMCR = 0x1140 | AN_RESTART` 上电。
-- **只在加载时写一次**：任何一次 `BMCR` 写入都会重启自协商，所以「帮忙」式的插线
-  检测反而会打断协商。早期的 fallback/强制速率状态机正是因此导致千兆不稳，已删除；
-  链路监视只读不写。
-- **有些对端要 6–12 秒**：1000BASE-T 自协商的正常时间，不是驱动问题。
-- 实测：两前面板口打环 899–909 Mb/s，对 RTL8153 927–931 Mb/s，400 MB TCP 911–926
-  Mb/s，VLAN 拆分无可测开销。
+前面板 PHY 复位后处于**下电**状态（读回来 `BMCR = 0x1940`），所以驱动必须显式上电，
+否则永远没有链路。加载时对每个 PHY 写一次：
+
+- DiagOS 的初始化序列（page `0xf8`、reg `0x14`）
+- `1000BASE-T 控制 (0x09) = 0x0200`：宣告 1000BASE-T 全双工，master/slave 交给
+  自协商决定。板子默认值是 `0x0e00`，其中 bit11 只是「偏好 master」，不影响能否协商
+- `BMCR = 0x1140 | AN_RESTART`：上电并启动一次自协商
+
+之后不再写任何 PHY 寄存器，只有只读的链路监视 —— 因为每次写 `BMCR` 都会重启自协商。
+有些对端需要 6–12 秒才协商完，这是 1000BASE-T 的正常时间。
+
+若某个口只到 100M，先查**网线和对端端口**：本机实测过劣质网线和一个实际不是千兆的
+路由器 LAN 口，两种情况都会落到 100M，与驱动无关。
 
 </details>
 
