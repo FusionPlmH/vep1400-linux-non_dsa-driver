@@ -185,14 +185,16 @@ vep1400: GE3 link up (1G)
 
 ## 排障
 
+先跑 `sudo /usr/lib/vep1400/vep1400-report.sh`（VyOS 用
+`python3 /config/scripts/vep1400-userspace.py info`），多数情况它会直接指出问题。
+
 | 现象 | 处理 |
 |---|---|
-| 没有 `GE1`…`GE6` | `journalctl -u vep1400-net`；`ixgbe` 抢先 probe 时脚本会自动重载一次 |
-| 每 4–5 分钟自动重启 | 看门狗没关：确认 `watchdog=1`，且模块足够早加载 |
+| 没有 `GE1`…`GE6` | `journalctl -u vep1400-net`；模块模式下 `ixgbe` 抢先 probe 时脚本会自动重载一次 |
+| 每 4–5 分钟自动重启，或 dmesg 报 `no iSMT SMBus adapter` | 同一个根因：i2c 没起来。`modprobe i2c_ismt`，并确认 `watchdog=1`、服务足够早启动 |
 | 某口只到 100M | `vep1400-linkdiag.sh <n>` 看对端是否宣告 1000BASE-T；多半是网线或对端口 |
-| 内核升级后失效 | `dkms status`、`journalctl -u dkms`；用户态实现不受影响 |
-| `unexpected switch id` | SMI 失步：看 `dmesg \| grep P2SB`，必要时传 `p2sb_bar_addr=` |
-| `no iSMT SMBus adapter` | `modprobe i2c_ismt`；只影响看门狗和 SFP，端口照常 |
+| `unexpected switch id` | SMI 失步。模块模式看 `dmesg \| grep P2SB` 后传 `p2sb_bar_addr=`；用户态模式确认 `/proc/iomem` 里有 `INTC3000` |
+| 内核升级后失效 | 只有模块模式会这样：`dkms status`、`journalctl -u dkms` |
 
 ## VyOS
 

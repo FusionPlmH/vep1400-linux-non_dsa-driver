@@ -195,14 +195,17 @@ vep1400: GE3 link up (1G)
 
 ## Troubleshooting
 
+Start with `sudo /usr/lib/vep1400/vep1400-report.sh` (on VyOS
+`python3 /config/scripts/vep1400-userspace.py info`) — it points at the problem
+in most cases.
+
 | Symptom | Fix |
 |---|---|
-| no `GE1`…`GE6` | `journalctl -u vep1400-net`; the script reloads `ixgbe` once if it probed first |
-| reboots every 4–5 minutes | watchdog not disarmed: `watchdog=1` and the module must load early |
-| a port only reaches 100M | `vep1400-linkdiag.sh <n>`: check the peer advertises 1000BASE-T; usually cable or peer port |
-| broken after a kernel upgrade | `dkms status`, `journalctl -u dkms`; the userspace mode is unaffected |
-| `unexpected switch id` | SMI out of sync: check `dmesg \| grep P2SB`, pass `p2sb_bar_addr=` if needed |
-| `no iSMT SMBus adapter` | `modprobe i2c_ismt`; only the watchdog and SFP are affected |
+| no `GE1`…`GE6` | `journalctl -u vep1400-net`; in module mode the script reloads `ixgbe` once if it probed first |
+| reboots every 4–5 minutes, or dmesg says `no iSMT SMBus adapter` | same root cause: i2c is not up. `modprobe i2c_ismt`, and check `watchdog=1` plus early enough service start |
+| a port only reaches 100M | `vep1400-linkdiag.sh <n>`: does the peer advertise 1000BASE-T? usually cable or peer port |
+| `unexpected switch id` | SMI out of sync. Module mode: check `dmesg \| grep P2SB`, pass `p2sb_bar_addr=`; userspace mode: confirm `INTC3000` is in `/proc/iomem` |
+| broken after a kernel upgrade | only module mode: `dkms status`, `journalctl -u dkms` |
 
 ## VyOS
 
