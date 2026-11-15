@@ -127,23 +127,9 @@ sudo ./install.sh
 Uninstall: `sudo ./uninstall.sh` (removes the module, the userspace files under
 `/usr`, and the VyOS files under `/config`)
 
-## Which implementation?
+## Systems and implementations
 
-| | kernel module `vep1400.ko` | userspace `vep1400-userspace.py` |
-|---|---|---|
-| Debian / Ubuntu / PVE | **selected automatically** (recommended) | force with `--userspace` |
-| VyOS and other compiler-less systems | cannot be built | **selected automatically, the only option** |
-| Kernel upgrades | DKMS rebuilds it | nothing to do |
-| Needs | kernel headers + compiler | `python3` + readable `/dev/mem` |
-| X553 speed strap | programmable | not programmable (not needed on this board) |
-| Kernel taint | yes | no |
-
-Both drive the same register sequences and reach the same throughput. Use
-**one per machine** — `install.sh` refuses to mix them.
-
-## Supported systems
-
-| System | `install.sh` picks | Also needs | Status |
+| System | Default | Also needs | Status |
 |---|---|---|---|
 | Debian 13 | kernel module | `linux-headers-$(uname -r)` + `dkms` | ✅ tested (13.7 / kernel 6.12) |
 | Debian 12 | kernel module | same | expected to work (kernel 6.1, untested) |
@@ -152,25 +138,33 @@ Both drive the same register sequences and reach the same throughput. Use
 | VyOS 1.3.4 | userspace | `python3` + readable `/dev/mem` | ✅ tested (1.3.4 / kernel 5.4.261) |
 | other systemd distributions | userspace | same | untested |
 
-- Any system can force the userspace implementation with `--userspace`: no
-  compiler and no kernel headers required.
-- Hardware support is limited to the **Dell VEP1400 / VMware SD-WAN Edge 610
-  non-X (Atom C3308)**. The Edge 610X / VEP1400-X uses a C3558 and a different
-  switch configuration, which this version does not handle.
+`install.sh` follows the table above; any system can still force the userspace
+implementation with `--userspace`. Both drive the same register sequences and
+reach the same speed, but use **one per machine** — `install.sh` refuses to mix
+them:
+
+| | kernel module `vep1400.ko` | userspace `vep1400-userspace.py` |
+|---|---|---|
+| Shape | a DKMS-built kernel module | a Python script that writes the registers once at boot |
+| Kernel upgrades | DKMS rebuilds it | nothing to do |
+| X553 speed strap | programmable | not programmable (not needed on this board) |
+| Kernel taint | yes | no |
+
+Hardware support is limited to the **Dell VEP1400 / VMware SD-WAN Edge 610
+non-X (Atom C3308)**. The Edge 610X / VEP1400-X uses a C3558 and a different
+switch configuration, which this version does not handle.
 
 ## Port map
 
-| Linux | Switch port | Uplink | VLAN |
+| Front panel | Switch port | VLAN | Uplink (Debian / PVE · VyOS) |
 |---|---|---|---|
-| `GE1` `GE2` `GE3` | 1 2 3 | `eno1` (03:00.0) | 1 2 3 |
-| `GE4` `GE5` `GE6` | 4 5 6 | `eno2` (03:00.1) | 4 5 6 |
-| `SFP1` / `SFP2` | — | 05:00.1 / 05:00.0 | untagged |
+| `GE1` `GE2` `GE3` | 1 2 3 | 1 2 3 | `eno1` · `eth0` (03:00.0) |
+| `GE4` `GE5` `GE6` | 4 5 6 | 4 5 6 | `eno2` · `eth1` (03:00.1) |
+| `SFP1` / `SFP2` | — | untagged | 05:00.1 / 05:00.0 |
 
-`GE*` inherit their uplink's MAC plus a per-port offset (`+0x0a`…`+0x0f`).
-
-> The uplinks have different names per system: Debian / PVE use the predictable
-> names `eno1`/`eno2` (SFP cages `eno3`/`eno4`), while VyOS passes
-> `net.ifnames=0` and calls them `eth0`/`eth1` (SFP cages `eth2`/`eth3`).
+`GE*` inherit their uplink's MAC plus a per-port offset (`+0x0a`…`+0x0f`). The
+SFP cages are the other two X553s: `eno3`/`eno4` on Debian / PVE, `eth2`/`eth3`
+on VyOS.
 
 ## Using the ports
 
@@ -195,19 +189,21 @@ save
 
 True on both:
 
-- **Never** put an address on the uplinks themselves — `eno1`/`eno2` on Debian / PVE, `eth0`/`eth1` on VyOS
+- **Never** put an address on the uplinks themselves (right column of the table above)
 - **Never** bridge two ports — they already share a broadcast domain, that loops
 - Two ports on one subnet is fine; the driver sets `arp_ignore=1` / `arp_announce=2`
 
 ## Verify
+
+**Debian / Ubuntu / PVE**, both implementations install these scripts:
 
 ```sh
 sudo /usr/lib/vep1400/vep1400-report.sh        # one-page summary
 sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3    # decode one port's autonegotiation
 ```
 
-On VyOS those two scripts are not under `/usr` (only `/config` survives an image
-upgrade), so use the tool directly:
+**VyOS** only gets the tool itself (only `/config` survives an image upgrade), so
+call it directly:
 
 ```sh
 python3 /config/scripts/vep1400-userspace.py info      # switch port table
@@ -215,7 +211,7 @@ python3 /config/scripts/vep1400-userspace.py diag 3    # decode one port
 python3 /config/scripts/vep1400-userspace.py watch 60  # follow link changes
 ```
 
-A healthy boot looks like:
+A healthy boot in module mode looks like (userspace: `journalctl -t vep1400`):
 
 ```
 vep1400: Marvell 88E6190 rev 1
@@ -278,34 +274,6 @@ which is normal for 1000BASE-T.
 If a port only reaches 100M, check the **cable and the peer port** first: both a
 bad cable and a router LAN port that turned out not to be gigabit were measured
 on this unit, neither had anything to do with the driver.
-
-</details>
-
-<details>
-<summary><b>Module parameters</b></summary>
-
-Set them in `/etc/modprobe.d/vep1400.conf` (a default file is installed):
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `watchdog` | `1` | disarm the PIC watchdog |
-| `sfp_tx` | `1` | clear `TX_DISABLE` on both SFP cages |
-| `x553_speed` | `1000` | X553 backplane strap: `1000`, `2500`, or `0` (keep NVM) |
-| `phy_speed` | `0` | `0` = autoneg, or force `10`/`100`/`1000` |
-| `led_init` | `1` | program the front panel LEDs |
-| `bus_num` | `-1` | iSMT bus number, `-1` = find by name |
-| `p2sb_bar_addr` | `0` | P2SB MMIO BAR, `0` = autodetect |
-
-```
-softdep ixgbe pre: vep1400
-options vep1400 watchdog=1 sfp_tx=1 x553_speed=1000 phy_speed=0 led_init=1
-```
-
-The `softdep` matters: the driver writes the X553 `NW_MNG_IF_SEL` strap and
-`ixgbe` reads it exactly once at probe time. Most distributions keep `ixgbe` in
-the initramfs, where it cannot be ordered first — `/sys/kernel/debug/vep1400/info`
-then reports `x553_strap busy` and `vep1400-net.service` reloads `ixgbe` once.
-Installing with `--initramfs` avoids that reload entirely.
 
 </details>
 

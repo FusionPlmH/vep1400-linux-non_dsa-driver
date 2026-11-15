@@ -115,22 +115,9 @@ sudo ./install.sh
 
 卸载：`sudo ./uninstall.sh`（模块、`/usr` 下的用户态文件、VyOS 的 `/config` 文件一起清）
 
-## 两种实现怎么选
+## 系统与实现
 
-| | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
-|---|---|---|
-| Debian / Ubuntu / PVE | **自动选中**（推荐） | `--userspace` 可强制 |
-| VyOS 等无编译器系统 | 编不出来 | **自动选中，唯一选择** |
-| 内核升级 | DKMS 自动重编 | 不用管 |
-| 依赖 | 内核头文件 + 编译器 | `python3` + 可读 `/dev/mem` |
-| X553 速率档位 | 可写 | 写不了（本机不需要） |
-| 内核污点 | 有 | 无 |
-
-两者驱动同一套寄存器、速率一致，**一台机器只用一种**：`install.sh` 会拒绝混装。
-
-## 支持的系统
-
-| 系统 | `install.sh` 默认选择 | 额外依赖 | 验证状态 |
+| 系统 | 默认实现 | 额外依赖 | 验证 |
 |---|---|---|---|
 | Debian 13 | 内核模块 | `linux-headers-$(uname -r)` + `dkms` | ✅ 实测（13.7 / 内核 6.12） |
 | Debian 12 | 内核模块 | 同上 | 预计可用（内核 6.1，未实测） |
@@ -139,23 +126,29 @@ sudo ./install.sh
 | VyOS 1.3.4 | 用户态 | `python3` + 可读 `/dev/mem` | ✅ 实测（1.3.4 / 内核 5.4.261） |
 | 其它 systemd 发行版 | 用户态 | 同上 | 未实测 |
 
-- 任何系统都可以 `--userspace` 强制用户态：不需要编译器，也不需要内核头文件。
-- 硬件只支持 **Dell VEP1400 / VMware SD-WAN Edge 610 非 X（Atom C3308）**。
-  Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支持。
+`install.sh` 按上表自动选择；任何系统也可以 `--userspace` 强制用户态。两者驱动同一套
+寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
+
+| | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
+|---|---|---|
+| 形态 | DKMS 编译的内核模块 | Python 脚本，开机写一遍寄存器 |
+| 内核升级 | DKMS 自动重编 | 不用管 |
+| X553 速率档位 | 可写 | 写不了（本机不需要） |
+| 内核污点 | 有 | 无 |
+
+硬件只支持 **Dell VEP1400 / VMware SD-WAN Edge 610 非 X（Atom C3308）**；
+Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支持。
 
 ## 端口映射
 
-| Linux | 交换端口 | 上行口 | VLAN |
+| 前面板 | 交换端口 | VLAN | 上行口（Debian / PVE · VyOS） |
 |---|---|---|---|
-| `GE1` `GE2` `GE3` | 1 2 3 | `eno1`（03:00.0） | 1 2 3 |
-| `GE4` `GE5` `GE6` | 4 5 6 | `eno2`（03:00.1） | 4 5 6 |
-| `SFP1` / `SFP2` | — | 05:00.1 / 05:00.0 | 无标签 |
+| `GE1` `GE2` `GE3` | 1 2 3 | 1 2 3 | `eno1` · `eth0`（03:00.0） |
+| `GE4` `GE5` `GE6` | 4 5 6 | 4 5 6 | `eno2` · `eth1`（03:00.1） |
+| `SFP1` / `SFP2` | — | 无标签 | 05:00.1 / 05:00.0 |
 
-`GE*` 的 MAC 取自对应上行口并加偏移（`+0x0a`…`+0x0f`），保证唯一。
-
-> 上行口的名字随系统不同：Debian / PVE 用 systemd 可预测命名，是 `eno1`/`eno2`
-> （SFP 为 `eno3`/`eno4`）；VyOS 用 `net.ifnames=0`，是 `eth0`/`eth1`
-> （SFP 为 `eth2`/`eth3`）。
+`GE*` 的 MAC 取自对应上行口并加偏移（`+0x0a`…`+0x0f`），保证唯一。SFP 是另外两个
+X553 口：Debian / PVE 下是 `eno3`/`eno4`，VyOS 下是 `eth2`/`eth3`。
 
 ## 使用端口
 
@@ -180,18 +173,20 @@ save
 
 两种系统都适用：
 
-- **不要**给上行口本身配地址 —— Debian / PVE 上是 `eno1`/`eno2`，VyOS 上是 `eth0`/`eth1`
+- **不要**给上行口本身配地址（上面表格右边那列）
 - **不要**把两个 `GE*`（VyOS 上是两个 vif）桥接 —— 它们在交换机里本就同广播域，桥接会成环
 - 同网段多口是允许的，驱动已给 `GE*` 设好 `arp_ignore=1` / `arp_announce=2`
 
 ## 验证
 
+**Debian / Ubuntu / PVE**，两种实现装的都是这几个脚本：
+
 ```sh
 sudo /usr/lib/vep1400/vep1400-report.sh        # 一页总览
-sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3    # 单口自协商解码（两种实现通用）
+sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3    # 单口自协商解码
 ```
 
-VyOS 上这两个脚本不在 `/usr`（只在 `/config` 里能跨镜像升级保留），直接用工具本身：
+**VyOS** 上只装工具本体（`/config` 才跨镜像保留），直接调它：
 
 ```sh
 python3 /config/scripts/vep1400-userspace.py info      # 交换机端口表
@@ -199,7 +194,7 @@ python3 /config/scripts/vep1400-userspace.py diag 3    # 单口自协商解码
 python3 /config/scripts/vep1400-userspace.py watch 60  # 插拔线实时跟踪
 ```
 
-正常启动的内核日志：
+内核模块模式的正常启动日志（用户态实现看 `journalctl -t vep1400`）：
 
 ```
 vep1400: Marvell 88E6190 rev 1
@@ -257,33 +252,6 @@ vep1400: GE3 link up (1G)
 
 若某个口只到 100M，先查**网线和对端端口**：本机实测过劣质网线和一个实际不是千兆的
 路由器 LAN 口，两种情况都会落到 100M，与驱动无关。
-
-</details>
-
-<details>
-<summary><b>模块参数</b></summary>
-
-在 `/etc/modprobe.d/vep1400.conf` 里设（安装时已生成默认值）：
-
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `watchdog` | `1` | 关闭 PIC 看门狗 |
-| `sfp_tx` | `1` | 清除两个 SFP 笼的 `TX_DISABLE` |
-| `x553_speed` | `1000` | X553 背板档位：`1000`、`2500`、`0`（保留 NVM） |
-| `phy_speed` | `0` | `0` 自协商；`10`/`100`/`1000` 强制 |
-| `led_init` | `1` | 初始化前面板 LED |
-| `bus_num` | `-1` | iSMT 总线号，`-1` 按名字查找 |
-| `p2sb_bar_addr` | `0` | P2SB BAR，`0` 自动探测 |
-
-```
-softdep ixgbe pre: vep1400
-options vep1400 watchdog=1 sfp_tx=1 x553_speed=1000 phy_speed=0 led_init=1
-```
-
-`softdep` 很关键：驱动要写 X553 的 `NW_MNG_IF_SEL`，而 `ixgbe` 只在 probe 时读一次。
-多数发行版把 `ixgbe` 放进 initramfs，此时 `/sys/kernel/debug/vep1400/info` 会显示
-`x553_strap busy`，`vep1400-net.service` 会自动重载一次 `ixgbe`；用 `--initramfs`
-安装则可以完全避免这次重载。
 
 </details>
 
