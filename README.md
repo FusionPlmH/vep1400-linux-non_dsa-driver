@@ -34,10 +34,12 @@ ACPI/DT 描述。为一块板让每个发行版重编内核不现实，所以这
 会短暂打断 GE* 口。这块板只有一个管理面、纯被动散热，**无线是最省事的选择**；不要
 把某个 GE 口当作安装期间唯一的管理口。
 
-**VyOS**（原生无线配置）：
+**VyOS**（原生无线配置。`name-server` 这句别漏 —— VyOS 默认不配 DNS，缺了它后面
+`ping deb.debian.org` 一定失败，而 `ping 1.1.1.1` 却是通的）：
 
 ```
 configure
+set system name-server 1.1.1.1
 set interfaces wireless wlan0 type station
 set interfaces wireless wlan0 physical-device phy0
 set interfaces wireless wlan0 ssid "<SSID>"
@@ -87,11 +89,14 @@ ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 然后一行命令装（实现按系统自动选择，VyOS 走用户态）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
-wget -qO-  https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+wget -qO- https://neodev.team/get.sh | sudo bash                     # GitHub 不通时走镜像
 ```
 
-第一行用 curl、第二行用 wget，内容相同，挑一个。
+两行是同一件事，区别只在下载地址；要加参数就在 `bash` 后面接 `-s -- <选项>`（见下表）。
+统一用 `wget` 是因为 Debian / Ubuntu / PVE 默认就带（`wget` 是 standard 优先级，
+`curl` 是 optional，纯净安装里没有），VyOS 也有；机器上有 `curl` 的话，
+`wget -qO-` 换成 `curl -fsSL` 完全等价。
 
 用 git：
 
@@ -296,6 +301,7 @@ initramfs/           可选的提前加载钩子
 vyos/                VyOS 安装脚本 + 开机钩子
 install.sh           一个入口：默认模块，--userspace 走用户态
 get.sh               免 git 的一行命令安装
+get-mirror.sh        自建镜像用：归档也只从镜像站取，不碰 GitHub
 ```
 
 ## 许可
