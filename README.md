@@ -324,8 +324,62 @@ tool can create them too (`... vep1400-userspace.py vlan`), but on VyOS the
 `vif` form above is the idiomatic one.
 
 > The userspace tool is also handy for **diagnosing** a Debian/Ubuntu/PVE
-> install (`info` and `phy` work while the module is loaded). Do not run `init`
-> there — the module owns the switch. Pick one mechanism per machine.
+> install, but read the switch through `/sys/kernel/debug/vep1400/` there — the
+> module mutex-protects the SMI bus and the tool does not. `init` and `reset`
+> are refused while the module is loaded (see
+> [Kernel module or userspace tool?](#kernel-module-or-userspace-tool)).
+
+## Kernel module or userspace tool?
+
+Both program the identical register sequences and both reach the same line
+rate — measured on the same front panel port, 918 Mbit/s through the module's
+`GE3` and 926 Mbit/s through the tool's `eth0.3`, i.e. no measurable
+difference. So the choice is about engineering properties, not performance, and
+it is **one or the other per machine**, never both.
+
+| | kernel module `vep1400.ko` | userspace `vep1400-userspace.py` |
+|---|---|---|
+| Debian / Ubuntu / Proxmox VE | **recommended** | fallback |
+| VyOS, appliances, immutable images | not possible (no headers, no compiler) | **only option** |
+| Kernel upgrade | DKMS rebuilds automatically | nothing to do |
+| Needs | headers + compiler (+ `dkms`) | `python3` + readable `/dev/mem` |
+| X553 `NW_MNG_IF_SEL` strap | programmable (`pci_iomap`) | **not** programmable — `/dev/mem` refuses driver-owned BARs |
+| Applied before `ixgbe` probes | yes, with `--initramfs` or `softdep` | no, always after boot |
+| Observability | `dmesg` + `/sys/kernel/debug/vep1400/` | stdout / syslog |
+| Kernel taint | yes (out-of-tree) | no |
+| Worst failure mode | kernel oops | Python traceback |
+| Uninstall | `uninstall.sh` | delete two files |
+
+Reasons the module wins where it can be built:
+
+* **It survives kernel upgrades.** DKMS rebuilds it against the new headers; the
+  userspace tool would have to be re-run by hand if anything about `/dev/mem`
+  changes, and boots would silently lose the switch.
+* **It can program the X553 strap** (`NW_MNG_IF_SEL`), which lives inside a BAR
+  that `ixgbe` owns — `/dev/mem` access to it is refused by
+  `CONFIG_IO_STRICT_DEVMEM`. On *this* board that turns out to be cosmetic
+  (the NVM default already links at 1000baseKX/Full, verified by running the
+  userspace tool alone, without the strap, at 926 Mbit/s), but on a board whose
+  NVM default were different the module is the only way.
+* **It runs at the right time.** Loaded from the initramfs or via
+  `softdep ixgbe pre: vep1400`, the switch is ready before `ixgbe` binds, so no
+  NIC reload is needed at boot.
+* **It is a normal Linux citizen**: systemd units, `modprobe` parameters, debugfs,
+  `dmesg` entries, a mutex serialising SMI users.
+
+Reasons the userspace tool exists at all:
+
+* VyOS has no compiler and no kernel headers, so the module simply cannot be
+  built there — this is the whole reason the tool was written.
+* It is also the only way to look at the switch on a machine where you do not
+  want to (or cannot) taint the kernel, and it is a good diagnostic: `info`,
+  `phy` and `watch` work without changing a single register.
+
+Safety: the tool refuses `init`/`reset` while `vep1400.ko` is loaded (override
+with `--force`), because two masters on the same bit-banged SMI bus would
+corrupt each other's transactions. For the same reason, do not use the tool's
+`info`/`phy` as the primary source when the module is loaded — the module's
+`/sys/kernel/debug/vep1400/` files are mutex-protected and authoritative.
 
 ## Using the ports
 

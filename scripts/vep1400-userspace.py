@@ -18,8 +18,14 @@ example on VyOS (no compiler, no kernel headers in the image).
 Options:
   --reset        reset the switch first (drops all links for ~1s)
   --no-i2c       skip watchdog / SFP handling
+  --force        allow init/reset even when vep1400.ko owns the switch
   --uplink-a IF  uplink for GE1..GE3 (default: autodetect)
   --uplink-b IF  uplink for GE4..GE6 (default: autodetect)
+
+Which one to use: on Debian/Ubuntu/PVE prefer the kernel module (it survives
+kernel upgrades through DKMS and can program the X553 strap). This tool is for
+systems where the module cannot be built - VyOS, appliances, immutable images -
+and for diagnostics.
 """
 
 from __future__ import print_function
@@ -659,6 +665,19 @@ def log(msg):
     print("vep1400: %s" % msg)
 
 
+def module_loaded():
+    return os.path.isdir("/sys/module/vep1400")
+
+
+def warn_if_module():
+    if module_loaded():
+        sys.stderr.write(
+            "vep1400: note: vep1400.ko is loaded and polls the same SMI bus; "
+            "readings may be unreliable.\n"
+            "vep1400:       use /sys/kernel/debug/vep1400/{info,ports,phy} "
+            "instead.\n")
+
+
 def usage():
     print(__doc__.strip())
     sys.exit(0 if len(sys.argv) > 1 else 2)
@@ -678,6 +697,13 @@ def main(argv):
             up_a = args[i + 1]
         if a == "--uplink-b":
             up_b = args[i + 1]
+
+    if cmd in ("init", "reset") and module_loaded() and "--force" not in args:
+        die("vep1400.ko is loaded and already owns the switch.\n"
+            "       On Debian/Ubuntu/PVE use /sys/kernel/debug/vep1400/ and\n"
+            "       the systemd services instead, or pass --force to override.")
+    if cmd in ("info", "phy", "watch"):
+        warn_if_module()
 
     if cmd == "unvlan":
         remove_vlans()
