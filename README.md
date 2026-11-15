@@ -305,6 +305,11 @@ save
 The result is `eth0.1` … `eth1.6`, one per front panel port. Never put an address
 on `eth0`/`eth1` themselves.
 
+Measured on the reference unit: front panel port 3 at **1000 Mb/s full duplex**
+(`bmsr=0x796d`, `lpar=0x4de1`, switch port status `0x5e4f`), and **926 Mbit/s**
+of TCP payload over `eth0.3` — identical to the kernel-module numbers on
+Debian, so the userspace tool costs nothing.
+
 Day-to-day commands:
 
 ```sh
