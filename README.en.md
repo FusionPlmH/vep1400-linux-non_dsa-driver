@@ -104,11 +104,7 @@ wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dri
 wget -qO- https://neodev.team/get.sh | sudo bash                     # mirror, if GitHub is unreachable
 ```
 
-Both lines are the same thing — only the download URL differs; to pass an option,
-append `-s -- <option>` after `bash` (see the table below). `wget` is used because
-Debian / Ubuntu / PVE ship it by default (`wget` is priority *standard*, `curl` is
-*optional* and absent from a clean install), and VyOS has it too; if you have
-`curl`, `curl -fsSL` is an exact substitute for `wget -qO-`.
+To pass an option, append `-s -- <option>` after `bash` (see the table below).
 
 With git:
 

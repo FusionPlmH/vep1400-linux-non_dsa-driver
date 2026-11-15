@@ -93,10 +93,7 @@ wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dri
 wget -qO- https://neodev.team/get.sh | sudo bash                     # GitHub 不通时走镜像
 ```
 
-两行是同一件事，区别只在下载地址；要加参数就在 `bash` 后面接 `-s -- <选项>`（见下表）。
-统一用 `wget` 是因为 Debian / Ubuntu / PVE 默认就带（`wget` 是 standard 优先级，
-`curl` 是 optional，纯净安装里没有），VyOS 也有；机器上有 `curl` 的话，
-`wget -qO-` 换成 `curl -fsSL` 完全等价。
+要加参数就在 `bash` 后面接 `-s -- <选项>`（见下表）。
 
 用 git：
 
