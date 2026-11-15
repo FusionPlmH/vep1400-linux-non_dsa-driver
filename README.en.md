@@ -172,7 +172,7 @@ Both drive the same register sequences and reach the same throughput. Use
 
 ## Using the ports
 
-After boot `GE1`…`GE6` are ordinary interfaces:
+**Debian / Proxmox VE** (ifupdown):
 
 ```sh
 # /etc/network/interfaces
@@ -180,8 +180,21 @@ auto GE1
 iface GE1 inet dhcp
 ```
 
+**VyOS**: it rejects interface names like `GE1` (`Invalid Ethernet interface
+name`), so use native vifs on the two uplinks — `vif N` is front panel port N:
+
+```
+configure
+set interfaces ethernet eth0 vif 3 address dhcp     # front panel 3
+set interfaces ethernet eth1 vif 6 address dhcp     # front panel 6
+commit
+save
+```
+
+True on both:
+
 - **Never** put an address on `eno1`/`eno2` — they are the tagged internal uplinks
-- **Never** bridge two `GE*` ports — they already share a broadcast domain, that loops
+- **Never** bridge two ports — they already share a broadcast domain, that loops
 - Two ports on one subnet is fine; the driver sets `arp_ignore=1` / `arp_announce=2`
 
 ## Verify
@@ -189,6 +202,15 @@ iface GE1 inet dhcp
 ```sh
 sudo /usr/lib/vep1400/vep1400-report.sh        # one-page summary
 sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3    # decode one port's autonegotiation
+```
+
+On VyOS those two scripts are not under `/usr` (only `/config` survives an image
+upgrade), so use the tool directly:
+
+```sh
+python3 /config/scripts/vep1400-userspace.py info      # switch port table
+python3 /config/scripts/vep1400-userspace.py diag 3    # decode one port
+python3 /config/scripts/vep1400-userspace.py watch 60  # follow link changes
 ```
 
 A healthy boot looks like:
@@ -216,31 +238,6 @@ in most cases.
 | a port only reaches 100M | `vep1400-linkdiag.sh <n>`: does the peer advertise 1000BASE-T? usually cable or peer port |
 | `unexpected switch id` | SMI out of sync. Module mode: check `dmesg \| grep P2SB`, pass `p2sb_bar_addr=`; userspace mode: confirm `INTC3000` is in `/proc/iomem` |
 | broken after a kernel upgrade | only module mode: `dkms status`, `journalctl -u dkms` |
-
-## VyOS
-
-`install.sh` selects the userspace implementation automatically, nothing extra to
-pass. **The only difference is how the ports are configured:**
-
-VyOS rejects interface names like `GE1` (`Invalid Ethernet interface name`), so
-use native vifs on the two uplinks — `vif N` is front panel port N:
-
-```
-configure
-set interfaces ethernet eth0 vif 3 address dhcp     # front panel 3
-set interfaces ethernet eth1 vif 6 address dhcp     # front panel 6
-commit
-save
-```
-
-The diagnostics live in `/config/scripts/` (not `/usr/lib/vep1400/`, because only
-`/config` survives an image upgrade):
-
-```sh
-python3 /config/scripts/vep1400-userspace.py info      # switch port table
-python3 /config/scripts/vep1400-userspace.py diag 3    # decode one port
-python3 /config/scripts/vep1400-userspace.py watch 60  # follow link changes
-```
 
 ## The hardware
 

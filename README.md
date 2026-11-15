@@ -159,7 +159,7 @@ sudo ./install.sh --userspace  # 或强制用户态
 
 ## 使用端口
 
-开机后 `GE1`…`GE6` 就是普通网卡：
+**Debian / Proxmox VE**（ifupdown）：
 
 ```sh
 # /etc/network/interfaces
@@ -167,8 +167,21 @@ auto GE1
 iface GE1 inet dhcp
 ```
 
+**VyOS**：不接受 `GE1` 这类接口名（会报 `Invalid Ethernet interface name`），要用
+两个上行口上的原生 vif —— `vif N` 就是前面板第 N 口：
+
+```
+configure
+set interfaces ethernet eth0 vif 3 address dhcp     # 前面板 3
+set interfaces ethernet eth1 vif 6 address dhcp     # 前面板 6
+commit
+save
+```
+
+两种系统都适用：
+
 - **不要**给 `eno1`/`eno2` 配地址 —— 它们是带标签的内部上行口
-- **不要**把两个 `GE*` 桥接 —— 它们在交换机里本就同广播域，桥接会成环
+- **不要**把两个 `GE*`（VyOS 上是两个 vif）桥接 —— 它们在交换机里本就同广播域，桥接会成环
 - 同网段多口是允许的，驱动已给 `GE*` 设好 `arp_ignore=1` / `arp_announce=2`
 
 ## 验证
@@ -176,6 +189,14 @@ iface GE1 inet dhcp
 ```sh
 sudo /usr/lib/vep1400/vep1400-report.sh        # 一页总览
 sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3    # 单口自协商解码（两种实现通用）
+```
+
+VyOS 上这两个脚本不在 `/usr`（只在 `/config` 里能跨镜像升级保留），直接用工具本身：
+
+```sh
+python3 /config/scripts/vep1400-userspace.py info      # 交换机端口表
+python3 /config/scripts/vep1400-userspace.py diag 3    # 单口自协商解码
+python3 /config/scripts/vep1400-userspace.py watch 60  # 插拔线实时跟踪
 ```
 
 正常启动的内核日志：
@@ -202,30 +223,6 @@ vep1400: GE3 link up (1G)
 | 某口只到 100M | `vep1400-linkdiag.sh <n>` 看对端是否宣告 1000BASE-T；多半是网线或对端口 |
 | `unexpected switch id` | SMI 失步。模块模式看 `dmesg \| grep P2SB` 后传 `p2sb_bar_addr=`；用户态模式确认 `/proc/iomem` 里有 `INTC3000` |
 | 内核升级后失效 | 只有模块模式会这样：`dkms status`、`journalctl -u dkms` |
-
-## VyOS
-
-`install.sh` 会自动选用户态实现，不需要额外参数。**唯一不同的是端口配置方式**：
-
-VyOS 不接受 `GE1` 这类接口名（会报 `Invalid Ethernet interface name`），要用两个
-上行口上的原生 vif —— `vif N` 就是前面板第 N 口：
-
-```
-configure
-set interfaces ethernet eth0 vif 3 address dhcp     # 前面板 3
-set interfaces ethernet eth1 vif 6 address dhcp     # 前面板 6
-commit
-save
-```
-
-诊断工具在 `/config/scripts/`（不是 `/usr/lib/vep1400/`，因为 `/config` 才能跨镜像
-升级保留）：
-
-```sh
-python3 /config/scripts/vep1400-userspace.py info      # 交换机端口表
-python3 /config/scripts/vep1400-userspace.py diag 3    # 单口自协商解码
-python3 /config/scripts/vep1400-userspace.py watch 60  # 插拔线实时跟踪
-```
 
 ## 硬件
 
