@@ -5,7 +5,6 @@ set -u
 
 for n in 1 2 3 4 5 6; do
 	ip link del "GE$n" 2>/dev/null || true
-	ip link del "lan$n" 2>/dev/null || true
 done
 
 for pair in "SFP1:eno4" "SFP2:eno3"; do

@@ -18,20 +18,9 @@ KVER=$(uname -r)
 
 systemctl disable --now vep1400-net.service vep1400.service 2>/dev/null || true
 
-for n in 1 2 3 4 5 6; do
-	ip link del "GE$n" 2>/dev/null || true
-done
-
-# Give the SFP cages their kernel names back
-for pair in "SFP1:eno4" "SFP2:eno3"; do
-	name=${pair%%:*}
-	orig=${pair##*:}
-	if ip link show "$name" >/dev/null 2>&1 &&
-	   ! ip link show "$orig" >/dev/null 2>&1; then
-		ip link set dev "$name" down 2>/dev/null || true
-		ip link set dev "$name" name "$orig" 2>/dev/null || true
-	fi
-done
+# The unit's ExecStop already ran the teardown; run it once more in case the
+# unit was missing or had been disabled earlier.
+[ -x "$LIB_DIR/vep1400-teardown.sh" ] && "$LIB_DIR/vep1400-teardown.sh" 2>/dev/null
 
 modprobe -r vep1400 2>/dev/null || true
 
@@ -43,9 +32,7 @@ rm -rf /usr/src/vep1400-"$VERSION" "$LIB_DIR" "$DOC_DIR"
 rm -f /etc/systemd/system/vep1400.service \
 	/etc/systemd/system/vep1400-net.service \
 	/etc/modprobe.d/vep1400.conf \
-	"/lib/modules/$KVER/updates/dkms/vep1400.ko" \
-	"/lib/modules/$KVER/extra/vep1400/vep1400_switch.ko" \
-	"/lib/modules/$KVER/extra/vep1400/vep1400_i2c.ko"
+	"/lib/modules/$KVER/updates/dkms/vep1400.ko"
 
 # Rebuild the initramfs without the early-load hook, otherwise the next boot
 # still loads vep1400 from the (now stale) initramfs.
