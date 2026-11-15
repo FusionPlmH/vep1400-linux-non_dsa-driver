@@ -7,11 +7,15 @@
 # Prints the negotiated speed plus both sides' autonegotiation advertisement,
 # which makes it obvious whether 1G is possible on this cable / peer or
 # whether the partner only offers 10/100 Mbps.
+#
+# Uses the module's debugfs when it is there and otherwise falls back to the
+# userspace tool, so the same command works with either implementation.
 
 set -u
 
 PHY=/sys/kernel/debug/vep1400/phy
 PORTS=/sys/kernel/debug/vep1400/ports
+TOOL=/usr/lib/vep1400/vep1400-userspace.py
 port=${1:-1}
 
 case "$port" in
@@ -23,7 +27,10 @@ case "$port" in
 esac
 
 if [ ! -r "$PHY" ] || [ ! -r "$PORTS" ]; then
-	echo "ERROR: debugfs files missing (module loaded? run as root)" >&2
+	if [ -x "$TOOL" ] && command -v python3 >/dev/null 2>&1; then
+		exec python3 "$TOOL" diag "$port"
+	fi
+	echo "ERROR: no debugfs and no $TOOL (nothing installed?)" >&2
 	exit 1
 fi
 

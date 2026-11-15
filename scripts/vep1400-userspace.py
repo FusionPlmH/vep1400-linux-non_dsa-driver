@@ -11,6 +11,7 @@ example on VyOS (no compiler, no kernel headers in the image).
   vep1400-userspace.py init          configure switch, PHYs, LEDs, watchdog, SFP
   vep1400-userspace.py reset         reset the switch to its power-on defaults
   vep1400-userspace.py phy           dump the front panel PHY registers
+  vep1400-userspace.py diag [n]      decode one port's autonegotiation
   vep1400-userspace.py watch [sec]   follow link changes (default 60 s)
   vep1400-userspace.py vlan          create GE1..GE6 on top of the uplinks
   vep1400-userspace.py unvlan        remove them again
@@ -553,8 +554,63 @@ def show_phy(smi):
                  "yes" if bmsr & 0x0004 else "no"))
 
 
+def diag(smi, port):
+    """Same output as scripts/vep1400-linkdiag.sh, for userspace installs."""
+    def has(val, bit):
+        return bool(val & bit)
+
+    def adv10(anar):
+        out = []
+        if has(anar, 0x0100):
+            out.append("100FD")
+        if has(anar, 0x0080):
+            out.append("100HD")
+        if has(anar, 0x0040):
+            out.append("10FD")
+        if has(anar, 0x0020):
+            out.append("10HD")
+        return " ".join(out)
+
+    bmcr = smi.phy_read(port, PHY_BMCR)
+    bmsr = smi.phy_read(port, PHY_BMSR)
+    anar = smi.phy_read(port, 0x04)
+    lpar = smi.phy_read(port, 0x05)
+    t1kc = smi.phy_read(port, PHY_CTRL1000)
+    t1ks = smi.phy_read(port, 0x0A)
+    spec = smi.phy_read(port, 0x11)
+    sts = smi.read(port, REG_PORT_STS)
+
+    link = "up" if sts & (1 << 11) else "down"
+    speed = SPEED_NAMES[(sts >> 8) & 3] if link == "up" else "-"
+    duplex = ("full" if spec & 0x2000 else "half") if link == "up" else "-"
+
+    local = adv10(anar)
+    if has(t1kc, 0x0200):
+        local += " 1000FD"
+    if has(t1kc, 0x0100):
+        local += " 1000HD"
+    peer = adv10(lpar)
+
+    print("port %d: link %s  speed=%s  duplex=%s  an=%s  an-complete=%s"
+          % (port, link, speed, duplex,
+             "on" if has(bmcr, 0x1000) else "off",
+             "yes" if has(bmsr, 0x0020) else "no"))
+    print("  local: anar=0x%04x 1000t-ctrl=0x%04x -> [%s]"
+          % (anar, t1kc, local.strip() or "none"))
+    print("  peer : anlpar=0x%04x (10/100), 1000t-status=0x%04x -> [%s]"
+          % (lpar, t1ks, peer or "unknown"))
+
+    if not has(t1kc, 0x0200):
+        print("  note : this side does not advertise 1000BASE-T")
+    if link == "up" and speed not in ("1G", "2.5G") and has(t1kc, 0x0200):
+        print("  note : 1000BASE-T is advertised but the link came up at %s"
+              " - check the cable and the peer port" % speed)
+    if has(t1kc, 0x1000) or has(t1kc, 0x0800):
+        print("  note : 1000BASE-T master/slave is forced (0x%04x), the driver"
+              " programs 0x0200 (automatic)" % t1kc)
+
+
 def watch_links(smi, seconds):
-    """Follow the front panel link state, one line per change."""
     prev = {}
     print("watching the front panel ports for %d s (Ctrl-C to stop)"
           % seconds)
@@ -733,6 +789,16 @@ def main(argv):
                 if a.isdigit():
                     secs = int(a)
             watch_links(smi, secs)
+            return 0
+
+        if cmd == "diag":
+            port = 1
+            for a in args:
+                if a.isdigit():
+                    port = int(a)
+            if not FIRST_PORT <= port <= LAST_PORT:
+                die("port must be 1..6")
+            diag(smi, port)
             return 0
 
         if cmd == "reset":

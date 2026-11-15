@@ -1,5 +1,12 @@
 #!/bin/bash
 # Remove the Dell VEP1400 / VMware SD-WAN Edge 610 board support.
+#
+# Removes either implementation (kernel module or userspace) - they share the
+# same unit names, so there is nothing to choose here.
+#
+# On VyOS the files live in /config, use a different mechanism; the hook there
+# is /config/scripts/vyos-postconfig-bootup.script and removing it plus
+# /config/scripts/vep1400-userspace.py is enough.
 
 set -u
 

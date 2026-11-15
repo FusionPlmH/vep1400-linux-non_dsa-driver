@@ -1,0 +1,19 @@
+[Unit]
+Description=Dell VEP1400 / VMware Edge 610 board support (userspace bring-up)
+Documentation=file:/usr/share/doc/vep1400/README.md
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/sbin/modprobe i2c_ismt
+ExecStartPre=-/sbin/modprobe i2c-dev
+ExecStart=/usr/bin/python3 /usr/lib/vep1400/vep1400-userspace.py init
+TimeoutStartSec=120
+StandardOutput=journal+console
+
+[Install]
+WantedBy=sysinit.target

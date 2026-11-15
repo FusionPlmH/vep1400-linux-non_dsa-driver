@@ -1,14 +1,18 @@
-**English** &nbsp;·&nbsp; [简体中文](README.zh-CN.md)
+[English](README.en.md) &nbsp;·&nbsp; **简体中文**
 
-# vep1400 — Dell VEP1400 / VMware SD-WAN Edge 610 on standard Linux
+# vep1400 —— Dell VEP1400 / VMware SD-WAN Edge 610 标准 Linux 支持
 
-Board support for the **Dell VEP1400** (sold as **VMware SD-WAN Edge 610**, the
-non-X variant with an Intel Atom C3308 "Denverton") that makes the six front
-panel RJ45 ports and the two SFP cages work on a stock **Debian / Ubuntu /
-Proxmox VE / VyOS** installation — no custom kernel, no device tree, no DSA.
+为 **Dell VEP1400**（同款机型：**VMware SD-WAN Edge 610** 非 X 版，Intel Atom
+C3308 "Denverton"）提供板级支持，让六个前面板 RJ45 口和两个 SFP 笼在**原版
+Debian / Ubuntu / Proxmox VE / VyOS** 上直接可用 —— 不需要自编译内核，不需要
+设备树，也不需要 DSA。
 
-Tested on real hardware: Debian 13.7 / kernel 6.12, all six ports at 1000 Mb/s,
-~930 Mb/s of useful throughput per port.
+提供两种实现，同一块板子**任选其一**：内核模块（Debian/Ubuntu/PVE 推荐）和
+用户态工具（VyOS 只能用这个，也适合不想给内核加污点的场景）。两者驱动的是同一套
+寄存器序列，实测吞吐无差别。
+
+真机实测：Debian 13.7 / 内核 6.12 与 VyOS 1.3.4 / 内核 5.4.261，六个端口全部
+1000 Mb/s，单口有效载荷 918–926 Mb/s。
 
 ```
     ┌──────────────────────────── Edge 610 / VEP1400 ───────────────────────────┐
@@ -21,56 +25,73 @@ Tested on real hardware: Debian 13.7 / kernel 6.12, all six ports at 1000 Mb/s,
     │  GE5 ─┼─ PHY4..6 ─┤                                                       │
     │  GE6 ─┘           └─── port  9 ── 802.1Q ── 0000:03:00.1 (ixgbe) ── eno2  │
     │                                                                           │
-    │  SFP1 ── 0000:05:00.1 (ixgbe)     SFP2 ── 0000:05:00.0 (ixgbe)            │
+    │  SFP1 ── 0000:05:00.1 (ixgbe)     SFP2 ── 05:00.0 (ixgbe)                 │
     └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-`vep1400.ko` owns the switch: it bit-bangs the SMI bus over the hidden Denverton
-P2SB pads, programs the 88E6190 into Dell DiagOS' "one VLAN per front panel
-port" model, powers up the six PHYs and then leaves them completely alone, so a
-plugged cable autonegotiates its highest common speed in 2–6 s — exactly like a
-normal NIC. It also disarms the PIC watchdog and enables SFP TX.
+驱动接管交换芯片：通过被 Dell 固件隐藏的 Denverton P2SB 焊盘位操作 SMI 总线，
+把 88E6190 配置成与 Dell DiagOS 相同的"每个前面板口一个 VLAN"模型，上电六个
+PHY，**然后就不再碰它们**。插上网线后由 PHY 自己的自协商在 2–6 秒内协商到双方
+最高速率，和普通网卡完全一样。同时关闭 PIC 看门狗、打开 SFP 发射。
 
-`vep1400-net.service` then creates `GE1`…`GE6` as VLAN devices on top of the two
-uplinks and renames the SFP cages to `SFP1`/`SFP2`.
+`vep1400-net.service` 随后在两个上行口之上创建 `GE1`…`GE6`，并把两个 SFP 笼
+重命名为 `SFP1`/`SFP2`。
+
+## 目录
+
+- [准备：先打通管理网](#准备先打通管理网)
+- [快速开始](#快速开始)
+  - [一行命令安装](#一行命令安装)
+  - [用 git 安装](#用-git-安装)
+  - [安装选项](#安装选项)
+  - [两种实现怎么选](#两种实现怎么选)
+- [支持的系统](#支持的系统)
+- [硬件信息](#硬件信息)
+- [端口映射与 MAC](#端口映射与-mac)
+- [内核模块还是用户态工具](#内核模块还是用户态工具)
+- [使用这些端口](#使用这些端口)
+- [验证](#验证)
+- [VyOS](#vyos)
+- [模块参数](#模块参数)
+- [原理：为什么不用 DSA](#原理为什么不用-dsa)
+- [原理：关于 1G 协商](#原理关于-1g-协商)
+- [排障](#排障)
+- [目录结构](#目录结构)
+- [备注](#备注)
+- [许可](#许可)
 
 ---
 
-## Before you install: bring up your management path first
+## 准备：先打通管理网
 
-Installing this driver is a chicken-and-egg problem. `vep1400.ko` resets the
-switch and re-initialises all six front panel PHYs, and `vep1400-net.service`
-reloads `ixgbe` once when it has to. Any address on a `GE*` port disappears
-during that window — and you need internet access to install `dkms` and
-`linux-headers-$(uname -r)` *before* the driver can even be built.
+装这个驱动有个先有鸡还是先有蛋的问题：`vep1400.ko` 会复位交换芯片并重新初始化
+六个前面板 PHY，必要时 `vep1400-net.service` 还会重载一次 `ixgbe`。这个过程里
+配在 `GE*` 上的地址会消失 —— 而在驱动编译出来之前，你又必须能上网装 `dkms` 和
+`linux-headers-$(uname -r)`。
 
-**Recommended: use the Wi-Fi card as your management and internet path, then
-install the driver.** Wi-Fi is completely independent of the 88E6190 and the
-X553, so the box stays reachable — and keeps its internet access — through the
-whole install and every reboot afterwards. The reference unit has a QCA986x
-(`ath10k_pci`) card. If your unit has no Wi-Fi, a USB Ethernet adapter or a
-second machine on the serial console works just as well.
+**建议：先用无线网卡做管理和上网通道，再来装驱动。** 无线与 88E6190、X553 完全
+无关，整个安装过程以及之后的每次重启，机器都不会失联，也一直有外网。参考机装的
+是 QCA986x（`ath10k_pci`）。如果你的机器没有无线，USB 网卡或串口+另一台机器也
+同样可行。
 
-What does **not** work is making one of `GE1`…`GE6` your only management link
-before the driver exists.
+**不要**在驱动还不存在的时候，把 `GE1`…`GE6` 中的某一个当成唯一的管理口。
 
-Pick the recipe that matches your install:
+按你的系统选一种做法：
 
-**NetworkManager** (desktop images, Proxmox VE):
+**NetworkManager**（桌面镜像、Proxmox VE）：
 
 ```sh
 nmcli device wifi connect "<SSID>" password "<PSK>"
 nmcli connection modify "<SSID>" connection.autoconnect yes
 ```
 
-**iwd**:
+**iwd**：
 
 ```sh
 iwctl --passphrase "<PSK>" station wlan0 connect "<SSID>"
 ```
 
-**Minimal Debian (ifupdown + wpasupplicant)** — this is what the reference unit
-runs:
+**最小化 Debian（ifupdown + wpasupplicant）** —— 参考机就是这种：
 
 ```sh
 apt install -y wpasupplicant
@@ -84,56 +105,59 @@ EOF
 ifup wlp2s0
 ```
 
-Check the interface name first with `ip -br link` — it is `wlp2s0` here, but
-`wlan0` on many other cards. Then confirm you are really online before you
-continue:
+先用 `ip -br link` 确认网卡名 —— 这台是 `wlp2s0`，很多其它卡是 `wlan0`。然后确认
+真的通了再往下走：
 
 ```sh
-ip -4 addr show wlp2s0     # an address
-ip route                   # a default route via wlp2s0
-ping -c1 deb.debian.org    # replies
+ip -4 addr show wlp2s0     # 有地址
+ip route                   # 有经由 wlp2s0 的默认路由
+ping -c1 deb.debian.org    # 能通
 ```
 
-Now go ahead and install. Keep the serial console attached for the first reboot,
-and do not configure `GE1`…`GE6` until `vep1400-net.service` has created them.
+接下来就可以安装了。第一次重启时建议保留串口线，并且在 `vep1400-net.service`
+把 `GE1`…`GE6` 创建出来之前不要去配置它们。
 
-## Quick start
+## 快速开始
 
-### 1. One command — no git, no download
+### 一行命令安装
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 ```
 
-If `curl` is not installed, `wget` does the same thing:
+系统里没有 `curl` 时，用 `wget` 效果完全一样：
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 ```
 
-Add `--initramfs` for the cleanest boot (see [install options](#install-options)):
+默认安装**内核模块**。想要用户态实现就加 `--userspace`，想要最干净的开机流程可以
+加 `--initramfs`（见 [安装选项](#安装选项)）：
 
 ```sh
+# 用户态实现：不用编译器、不用内核头文件、不污染内核
+curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
+  | sudo bash -s -- --userspace
+
+# 内核模块 + 放进 initramfs（上行速率档位在网卡 probe 前生效）
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo bash -s -- --initramfs
 
 wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
-  | sudo bash -s -- --initramfs
+  | sudo bash -s -- --userspace
 ```
 
-`get.sh` downloads the release archive, unpacks it in a temporary directory and
-runs `install.sh`. It accepts every `install.sh` option and honours these
-environment variables if you mirror the project somewhere else:
+`get.sh` 会下载发布归档、在临时目录解包并执行 `install.sh`。它接受
+`install.sh` 的全部选项，并支持以下环境变量（需要镜像、代理或自建下载站时用）：
 
-| Variable | Default | Meaning |
+| 变量 | 默认值 | 含义 |
 |---|---|---|
-| `VEP1400_BASE` | `https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver` | repository base URL |
-| `VEP1400_REF` | `main` | branch to download |
-| `VEP1400_TARBALL` | *(unset)* | full archive URL (`.tar.gz` or `.zip`), overrides both |
+| `VEP1400_BASE` | `https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver` | 仓库基地址 |
+| `VEP1400_REF` | `main` | 要下载的分支 |
+| `VEP1400_TARBALL` | *（未设置）* | 完整归档地址（`.tar.gz` 或 `.zip`），优先级最高 |
 
-**Mirror** — <https://neodev.team/vep1400-linux-non_dsa-driver.zip> is a full copy
-of this repository. Use it when GitHub is slow or blocked; the same one-liner
-just points `VEP1400_TARBALL` at it:
+**镜像** —— <https://neodev.team/vep1400-linux-non_dsa-driver.zip> 是本仓库的完整
+副本。GitHub 慢或打不开时用它，同一条命令，只是把 `VEP1400_TARBALL` 指过去：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
@@ -143,122 +167,133 @@ wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dri
   | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 ```
 
-### 2. With git
+### 用 git 安装
 
 ```sh
-sudo apt install -y dkms linux-headers-$(uname -r)
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh
-sudo reboot
+
+sudo ./install.sh              # 内核模块（推荐，DKMS 自动跟内核升级）
+sudo ./install.sh --userspace  # 或者：用户态实现
 ```
 
-## Requirements
-
-| | |
-|---|---|
-| Hardware | Dell VEP1400 / VMware SD-WAN Edge 610 (non-X) |
-| OS | Debian 12/13, Ubuntu 22.04/24.04, Proxmox VE 8/9 (kernel module); VyOS (userspace, see [VyOS](#vyos)) |
-| Kernel | Debian/Ubuntu/PVE: 5.15 – 6.x, headers installed (`linux-headers-$(uname -r)`) |
-| Management | an independent path with internet access — Wi-Fi, a USB NIC or the serial console (see [above](#before-you-install-bring-up-your-management-path-first)) |
-| Tools | `dkms` (recommended, optional), `curl` or `wget`, `i2c-tools` (diagnostics only) |
-
-Boards with the Intel Atom C3XX8 **(Edge 6X0 / VEP1400-X)** use a different
-switch configuration and are **not** supported by this version.
-
-## The hardware
-
-Everything below was read from a real unit with `dmidecode`, `lspci` and
-`lscpu`, not from a marketing sheet.
-
-| | |
-|---|---|
-| System | Dell EMC `EDGE610`, DMI family `VEP1400`, SKU `08VT73`, BIOS `3.43.0.9-8` |
-| Board | `EDGE610-CPU` |
-| CPU | Intel Atom C3308 (Denverton, 14 nm), 2 cores / 2 threads, 1.6 GHz base, 2.1 GHz burst, 4 MB L2, QAT at `01:00.0` |
-| Memory | 4 GB DDR4-2400 ECC UDIMM (trained at 1866 MT/s), 4 slots, 128 GB max |
-| Storage | 16 GB eMMC (`mmcblk0`) plus an SD slot and one SATA port |
-| Switch | Marvell 88E6190 rev 1 — 6 front panel PHYs + 2 SerDes ports used as CPU uplinks |
-| NICs | 4× Intel X553 Backplane `8086:15c3`: `03:00.0/.1` feed the switch, `05:00.0/.1` are the SFP cages |
-| Wi-Fi | QCA986x `ath10k_pci` at `02:00.0` on the reference unit — ideal as the management path |
-| Front panel | 6× 10/100/1000BASE-T RJ45, 2× SFP |
-| Console | `ttyS0`, 115200 8N1 |
-| Cooling | **passive — there is no fan and no fan controller on the SMBus** |
-| Watchdog | PIC on SMBus `0x22`/`0x24`, reboots the board 4–5 minutes after power-on unless disarmed |
-
-The uplinks negotiate `1000baseKX/Full`, i.e. the switch and the X553s talk
-1000BASE-X across the board. 2.5G does not link on this board (see
-[the 1G story](#how-the-1g-link-works)).
-
-## Port map and MAC addresses
-
-| Linux | Switch port | PHY | Uplink | VLAN |
-|---|---|---|---|---|
-| `GE1` | 1 | 1 | `eno1` (03:00.0, port 10) | 1 |
-| `GE2` | 2 | 2 | `eno1` | 2 |
-| `GE3` | 3 | 3 | `eno1` | 3 |
-| `GE4` | 4 | 4 | `eno2` (03:00.1, port 9) | 4 |
-| `GE5` | 5 | 5 | `eno2` | 5 |
-| `GE6` | 6 | 6 | `eno2` | 6 |
-| `SFP1` | — | — | `05:00.1` | untagged |
-| `SFP2` | — | — | `05:00.0` | untagged |
-
-`GE1`…`GE6` inherit their uplink's MAC address plus a per-port offset
-(`+0x0a … +0x0f`) so every interface has a unique address.
-
-## Why not DSA?
-
-The upstream `mv88e6xxx` DSA driver would be the natural fit, but Debian,
-Ubuntu, Proxmox VE and VyOS all ship kernels with `# CONFIG_NET_DSA is not set`
-(verify with `grep NET_DSA /boot/config-$(uname -r)`), and the 88E6190 SMI bus
-is not connected to any MDIO controller, so the switch cannot be described in
-ACPI or device tree either. Rebuilding every target kernel is not an option for
-a downloadable driver, therefore this module does what the vendor firmware does:
-it configures the switch as a set of VLAN access ports and lets Linux see six
-ordinary Ethernet interfaces.
-
-```
-GE1..GE3 -> eno1 (03:00.0) -> switch port 10, VLAN 1..3
-GE4..GE6 -> eno2 (03:00.1) -> switch port  9, VLAN 4..6
-```
-
-Each front panel port is a secure 802.1Q access port; the CPU links carry the
-tags and are never configured with an address.
-
-## Install options
+### 安装选项
 
 ```sh
-sudo ./install.sh              # DKMS build + install, enable and start the services
-sudo ./install.sh --no-start   # install + enable, do not start now (reboot to use)
-sudo ./install.sh --no-dkms    # build only for the running kernel, no DKMS
-sudo ./install.sh --initramfs  # also load the module from the initramfs
+sudo ./install.sh              # 内核模块：DKMS 编译安装，enable 并立即启动
+sudo ./install.sh --userspace  # 用户态：只装工具 + vep1400.service，不编译任何东西
+sudo ./install.sh --no-start   # 安装并 enable，但本次不启动（重启后生效）
+sudo ./install.sh --no-dkms    # 模块模式：只针对当前内核编译，不装 DKMS
+sudo ./install.sh --initramfs  # 模块模式：同时把模块放进 initramfs
+sudo ./install.sh --force      # 已装另一种实现时，就地替换
 ```
 
-Install with `--initramfs` when the root filesystem takes a long time to mount
-(encrypted root, fsck): the PIC watchdog reboots the board 4–5 minutes after
-power-on unless the module has disarmed it. It also makes the uplink strap apply
-*before* `ixgbe` probes, so the boot does not need a NIC reload — see
-[How the 1G link works](#how-the-1g-link-works).
+两种实现**不能共存**（会同时驱动同一个交换机），`install.sh` 会拒绝并提示先
+`./uninstall.sh`，或者加 `--force` 就地替换。
 
-To remove everything:
+`--initramfs` 建议在根文件系统挂载很慢时使用（加密根分区、fsck）：PIC 看门狗在
+上电 4–5 分钟后会强制重启，需要尽早关闭它；它同时让上行速率档位在 `ixgbe` probe
+之前写入，开机不必重载网卡。
+
+卸载（两种实现同一个脚本）：
 
 ```sh
 sudo ./uninstall.sh
 ```
 
+### 两种实现怎么选
+
+| 你的情况 | 用哪个 |
+|---|---|
+| Debian / Ubuntu / Proxmox VE，能装内核头文件 | **内核模块**（默认） |
+| 同上，但不想装头文件 / 不想污染内核 / 头文件缺失 | `--userspace` |
+| VyOS 或其它没有编译器的系统 | **只能**用户态，见 [VyOS](#vyos) |
+| 只想看看交换机状态 | 用户态工具的 `info` / `phy` / `watch` |
+
+详细对比（DKMS、X553 档位、启动时机、失败模式等）见
+[内核模块还是用户态工具](#内核模块还是用户态工具)。
+
+## 支持的系统
+
+| | |
+|---|---|
+| 硬件 | Dell VEP1400 / VMware SD-WAN Edge 610（非 X） |
+| 内核模块 | Debian 12/13、Ubuntu 22.04/24.04、Proxmox VE 8/9；内核 5.15 – 6.x，需 `linux-headers-$(uname -r)` |
+| 用户态 | 上述系统全部适用，另含 VyOS 1.3.4（内核 5.4）等无编译器环境；需 `python3` + 可读 `/dev/mem` |
+| 管理网 | 一条独立且能上网的通道 —— 无线、USB 网卡或串口（见 [准备](#准备先打通管理网)） |
+| 工具 | `dkms`（模块模式推荐）、`curl` 或 `wget`、`i2c-tools`（仅诊断用） |
+
+Atom C3XX8 的 **Edge 6X0 / VEP1400-X** 交换机配置不同，本版本**不支持**。
+
+## 硬件信息
+
+以下全部读自真机（`dmidecode`、`lspci`、`lscpu`），不是抄宣传页。
+
+| | |
+|---|---|
+| 系统 | Dell EMC `EDGE610`，DMI Family `VEP1400`，SKU `08VT73`，BIOS `3.43.0.9-8` |
+| 主板 | `EDGE610-CPU` |
+| CPU | Intel Atom C3308（Denverton，14nm），2 核 2 线程，1.6 GHz 基频 / 2.1 GHz 睿频，4 MB L2，`01:00.0` 为 QAT 加速器 |
+| 内存 | 4 GB DDR4-2400 ECC UDIMM（实际跑 1866 MT/s），4 个插槽，最大 128 GB |
+| 存储 | 16 GB eMMC（`mmcblk0`），另有 SD 卡槽和 1 个 SATA 口 |
+| 交换芯片 | Marvell 88E6190 rev 1 —— 6 个前面板 PHY + 2 个用作 CPU 上行的 SerDes 口 |
+| 网卡 | 4 个 Intel X553 Backplane `8086:15c3`：`03:00.0/.1` 接交换芯片，`05:00.0/.1` 是 SFP 笼 |
+| 无线 | 参考机 `02:00.0` 上有 QCA986x（`ath10k_pci`）—— 很适合当管理通道 |
+| 前面板 | 6× 10/100/1000BASE-T RJ45，2× SFP |
+| 串口 | `ttyS0`，115200 8N1 |
+| 散热 | **纯被动散热 —— 无风扇，SMBus 上也没有风扇控制器** |
+| 看门狗 | PIC 位于 SMBus `0x22`/`0x24`，未关闭时上电 4–5 分钟强制重启 |
+
+上行口协商结果为 `1000baseKX/Full`，即交换芯片与 X553 之间走 1000BASE-X。
+本机 **2.5G 无法协商**（见 [原理：关于 1G 协商](#原理关于-1g-协商)）。
+
+## 端口映射与 MAC
+
+| Linux | 交换端口 | PHY | 上行口 | VLAN |
+|---|---|---|---|---|
+| `GE1` | 1 | 1 | `eno1`（03:00.0，port 10） | 1 |
+| `GE2` | 2 | 2 | `eno1` | 2 |
+| `GE3` | 3 | 3 | `eno1` | 3 |
+| `GE4` | 4 | 4 | `eno2`（03:00.1，port 9） | 4 |
+| `GE5` | 5 | 5 | `eno2` | 5 |
+| `GE6` | 6 | 6 | `eno2` | 6 |
+| `SFP1` | — | — | `05:00.1` | 不带标签 |
+| `SFP2` | — | — | `05:00.0` | 不带标签 |
+
+`GE1`…`GE6` 的 MAC 取自对应上行口的 MAC 加固定偏移（`+0x0a … +0x0f`），保证
+每个接口的地址唯一。
+
+## 原理：为什么不用 DSA
+
+上游 `mv88e6xxx` DSA 驱动本来是标准做法，但 Debian、Ubuntu、Proxmox VE 和
+VyOS 的内核全部是 `# CONFIG_NET_DSA is not set`（可用
+`grep NET_DSA /boot/config-$(uname -r)` 确认），而 88E6190 的 SMI 总线并没有
+接到任何 MDIO 控制器上，也无法通过 ACPI/DT 描述。对"下载即用"的项目来说，让
+每个发行版都重编内核不可接受。因此本驱动采用和厂家固件相同的思路：把交换机
+配成一组 VLAN 接入端口，Linux 侧看到的就是六个普通以太网口。
+
+```
+GE1..GE3 -> eno1 (03:00.0) -> 交换芯片 port 10，VLAN 1..3
+GE4..GE6 -> eno2 (03:00.1) -> 交换芯片 port  9，VLAN 4..6
+```
+
+每个前面板口都是安全的 802.1Q access 口，上行口只承载带标签的流量，永远不要
+在上面配置地址。
+
 ## VyOS
 
-VyOS is a special case: the image ships **no compiler and no kernel headers**
-(`/lib/modules/$(uname -r)/build` only holds a handful of UAPI headers), so
-`vep1400.ko` cannot be built there — and VyOS has no DKMS to rebuild it on
-kernel updates anyway. The same register sequences are therefore also available
-as a **userspace tool** that needs neither: it drives the switch directly
-through `/dev/mem` (the bit-banged SMI bus on the P2SB pads) and `/dev/i2c-0`
-(watchdog and SFP TX).
+VyOS 是个特例：镜像里**既没有编译器也没有内核头文件**
+（`/lib/modules/$(uname -r)/build` 里只有几个 UAPI 头），`vep1400.ko` 在机器上
+根本编不出来 —— 而且 VyOS 也没有 DKMS，内核升级后无法自动重编。所以同一套寄存器
+序列还提供了一份**用户态工具**，两个都不需要：它直接通过 `/dev/mem`（P2SB 焊盘上
+位操作的 SMI 总线）和 `/dev/i2c-0`（看门狗、SFP TX）操作交换机。
 
-Verified on **VyOS 1.3.4 (equuleus), kernel 5.4.261-amd64-vyos**, where
-`CONFIG_NET_DSA` and `CONFIG_NET_SWITCHDEV` are both disabled — the VLAN split
-below is the only option, exactly as on Debian.
+已在 **VyOS 1.3.4（equuleus）、内核 5.4.261-amd64-vyos** 上实测，该内核
+`CONFIG_NET_DSA` 和 `CONFIG_NET_SWITCHDEV` 都是关闭的 —— 和 Debian 一样，下面的
+VLAN 拆分是唯一可行路线。
+
+在 VyOS 上请**不要**用 `install.sh`（它检测到 VyOS 会直接拒绝模块模式），改用专为
+VyOS 写的封装脚本，它等于「用户态实现 + VyOS 原生开机钩子」：
 
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
@@ -266,20 +301,20 @@ cd vep1400-linux-non_dsa-driver
 sudo ./vyos/setup.sh
 ```
 
-`vyos/setup.sh` does four things:
+`vyos/setup.sh` 做四件事：
 
-1. copies `vep1400-userspace.py` to `/config/scripts/`, which VyOS keeps across
-   image upgrades (the rest of the filesystem does not),
-2. installs `/config/scripts/vyos-postconfig-bootup.script`, the documented
-   VyOS hook that runs on every boot after the configuration is applied,
-3. loads `i2c_ismt` and `i2c-dev`,
-4. programs the switch right away.
+1. 把 `vep1400-userspace.py` 复制到 `/config/scripts/`，VyOS 升级镜像时
+   `/config` 会保留（其它目录不会）；
+2. 安装 `/config/scripts/vyos-postconfig-bootup.script` —— VyOS 官方的开机钩子，
+   每次启动在配置加载完成后执行；
+3. 加载 `i2c_ismt` 和 `i2c-dev`；
+4. 立即把交换机配置好。
 
-The boot hook is what makes it survive reboots. It was validated the hard way:
-reset the switch to its power-on defaults (uplinks down, `eth0: Link detected:
-no`), reboot, and the hook brings everything back:
+开机钩子是重启后仍然生效的关键，验证方式是「先把交换机恢复到出厂状态再重启」：
 
 ```
+$ python3 vep1400-userspace.py reset      # 回到出厂，eth0 立刻掉链路
+$ systemctl reboot
 $ journalctl -t vep1400 -b
 vyos vep1400[2275]: switch and front panel PHYs configured
 
@@ -287,134 +322,121 @@ $ ethtool eth0 | grep 'Link detected'
 Link detected: yes
 ```
 
-Configure the front panel ports as VLAN interfaces on the two uplinks. VyOS
-names them `eth0`/`eth1`, and `vif N` maps 1:1 onto front panel port N:
+前面板端口用两个上行口上的 VLAN 子接口配置。VyOS 里它们叫 `eth0`/`eth1`，
+`vif N` 与前面板第 N 口一一对应：
 
 ```
 configure
-set interfaces ethernet eth0 vif 1 address 192.168.10.1/24    # front panel 1
-set interfaces ethernet eth0 vif 2 address 192.168.20.1/24    # front panel 2
-set interfaces ethernet eth0 vif 3 address dhcp               # front panel 3
-set interfaces ethernet eth1 vif 4 address 192.168.40.1/24    # front panel 4
-set interfaces ethernet eth1 vif 5 address 192.168.50.1/24    # front panel 5
-set interfaces ethernet eth1 vif 6 address dhcp               # front panel 6
+set interfaces ethernet eth0 vif 1 address 192.168.10.1/24    # 前面板 1
+set interfaces ethernet eth0 vif 2 address 192.168.20.1/24    # 前面板 2
+set interfaces ethernet eth0 vif 3 address dhcp               # 前面板 3
+set interfaces ethernet eth1 vif 4 address 192.168.40.1/24    # 前面板 4
+set interfaces ethernet eth1 vif 5 address 192.168.50.1/24    # 前面板 5
+set interfaces ethernet eth1 vif 6 address dhcp               # 前面板 6
 commit
 save
 ```
 
-The result is `eth0.1` … `eth1.6`, one per front panel port. Never put an address
-on `eth0`/`eth1` themselves.
+结果是 `eth0.1` … `eth1.6`，每个前面板口一个。**不要**给 `eth0`/`eth1` 本身
+配地址。
 
-Measured on the reference unit: front panel port 3 at **1000 Mb/s full duplex**
-(`bmsr=0x796d`, `lpar=0x4de1`, switch port status `0x5e4f`), and **926 Mbit/s**
-of TCP payload over `eth0.3` — identical to the kernel-module numbers on
-Debian, so the userspace tool costs nothing.
+参考机实测：前面板第 3 口 **1000 Mb/s 全双工**（`bmsr=0x796d`、`lpar=0x4de1`、
+交换端口状态 `0x5e4f`），`eth0.3` 上 TCP 有效载荷 **926 Mbit/s** —— 和 Debian 下
+内核模块的数值一致，说明用户态工具没有带来任何开销。
 
-Day-to-day commands:
+日常命令：
 
 ```sh
-python3 /config/scripts/vep1400-userspace.py info    # switch port table
-python3 /config/scripts/vep1400-userspace.py phy     # PHY registers + link
-python3 /config/scripts/vep1400-userspace.py init    # re-run the bring-up
-python3 /config/scripts/vep1400-userspace.py reset   # back to power-on defaults
+python3 /config/scripts/vep1400-userspace.py info    # 交换机端口表
+python3 /config/scripts/vep1400-userspace.py phy     # PHY 寄存器 + 链路
+python3 /config/scripts/vep1400-userspace.py init    # 重新执行初始化
+python3 /config/scripts/vep1400-userspace.py reset   # 回到出厂状态
 ```
 
-If you have a spare cable and want `GE1`…`GE6` names instead of `eth0.N`, the
-tool can create them too (`... vep1400-userspace.py vlan`), but on VyOS the
-`vif` form above is the idiomatic one.
+如果更习惯 `GE1`…`GE6` 这种名字，工具也能创建（`vep1400-userspace.py vlan`），
+不过在 VyOS 上上面那种 `vif` 写法才是原生做法。
 
-> The userspace tool is also handy for **diagnosing** a Debian/Ubuntu/PVE
-> install, but read the switch through `/sys/kernel/debug/vep1400/` there — the
-> module mutex-protects the SMI bus and the tool does not. `init` and `reset`
-> are refused while the module is loaded (see
-> [Kernel module or userspace tool?](#kernel-module-or-userspace-tool)).
+> 这份用户态工具在 Debian/Ubuntu/PVE 上也同样可以用来**诊断**，但那边请通过
+> `/sys/kernel/debug/vep1400/` 读交换机 —— 模块用互斥锁保护 SMI 总线，工具没有。
+> 模块加载时 `init`/`reset` 会被拒绝（见
+> [内核模块还是用户态工具？](#内核模块还是用户态工具)）。
 
-## Kernel module or userspace tool?
+## 内核模块还是用户态工具？
 
-Both program the identical register sequences and both reach the same line
-rate — measured on the same front panel port, 918 Mbit/s through the module's
-`GE3` and 926 Mbit/s through the tool's `eth0.3`, i.e. no measurable
-difference. So the choice is about engineering properties, not performance, and
-it is **one or the other per machine**, never both.
+两者驱动的是完全相同的寄存器序列，速率也一样 —— 同一个前面板口实测：走内核模块的
+`GE3` 是 918 Mbit/s，走用户态工具的 `eth0.3` 是 926 Mbit/s，没有可测量的差别。
+所以选择依据不是性能，而是工程属性，而且**一台机器只用一种**，绝不要两个并存。
 
-| | kernel module `vep1400.ko` | userspace `vep1400-userspace.py` |
+| | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
 |---|---|---|
-| Debian / Ubuntu / Proxmox VE | **recommended** | fallback |
-| VyOS, appliances, immutable images | not possible (no headers, no compiler) | **only option** |
-| Kernel upgrade | DKMS rebuilds automatically | nothing to do |
-| Needs | headers + compiler (+ `dkms`) | `python3` + readable `/dev/mem` |
-| X553 `NW_MNG_IF_SEL` strap | programmable (`pci_iomap`) | **not** programmable — `/dev/mem` refuses driver-owned BARs |
-| Applied before `ixgbe` probes | yes, with `--initramfs` or `softdep` | no, always after boot |
-| Observability | `dmesg` + `/sys/kernel/debug/vep1400/` | stdout / syslog |
-| Kernel taint | yes (out-of-tree) | no |
-| Worst failure mode | kernel oops | Python traceback |
-| Uninstall | `uninstall.sh` | delete two files |
+| Debian / Ubuntu / Proxmox VE | **推荐** | 兜底 |
+| VyOS、家电式设备、只读镜像 | 不可能（没头文件、没编译器） | **唯一选择** |
+| 内核升级 | DKMS 自动重编 | 无需处理 |
+| 依赖 | 头文件 + 编译器（+ `dkms`） | `python3` + 可读的 `/dev/mem` |
+| X553 `NW_MNG_IF_SEL` 档位 | 可写（`pci_iomap`） | **不可写** —— `/dev/mem` 拒绝已被驱动占用的 BAR |
+| 能否在 `ixgbe` probe 前生效 | 能（`--initramfs` 或 `softdep`） | 不能，总在开机之后 |
+| 可观测性 | `dmesg` + `/sys/kernel/debug/vep1400/` | stdout / syslog |
+| 内核污点 | 有（树外模块） | 无 |
+| 最坏情况 | 内核 oops | Python 报错栈 |
+| 卸载 | `uninstall.sh` | 删两个文件 |
 
-Reasons the module wins where it can be built:
+能编模块时为什么模块更好：
 
-* **It survives kernel upgrades.** DKMS rebuilds it against the new headers; the
-  userspace tool would have to be re-run by hand if anything about `/dev/mem`
-  changes, and boots would silently lose the switch.
-* **It can program the X553 strap** (`NW_MNG_IF_SEL`), which lives inside a BAR
-  that `ixgbe` owns — `/dev/mem` access to it is refused by
-  `CONFIG_IO_STRICT_DEVMEM`. On *this* board that turns out to be cosmetic
-  (the NVM default already links at 1000baseKX/Full, verified by running the
-  userspace tool alone, without the strap, at 926 Mbit/s), but on a board whose
-  NVM default were different the module is the only way.
-* **It runs at the right time.** Loaded from the initramfs or via
-  `softdep ixgbe pre: vep1400`, the switch is ready before `ixgbe` binds, so no
-  NIC reload is needed at boot.
-* **It is a normal Linux citizen**: systemd units, `modprobe` parameters, debugfs,
-  `dmesg` entries, a mutex serialising SMI users.
+* **扛得住内核升级。** DKMS 会按新头文件自动重编；用户态方案一旦启动流程或
+  `/dev/mem` 策略有变化，启动时就静默失去交换机，还得人工发现。
+* **能写 X553 速率档位**（`NW_MNG_IF_SEL`），那个寄存器在 `ixgbe` 占用的 BAR 里，
+  `CONFIG_IO_STRICT_DEVMEM` 会拒绝 `/dev/mem` 访问。在**本机**这一点其实是可有可无
+  的（NVM 默认值本身就能协商 1000baseKX/Full —— 只跑用户态工具、完全不写档位，
+  实测 926 Mbit/s），但如果哪块板子的 NVM 默认值不同，就只有模块能做到。
+* **时机正确。** 从 initramfs 加载或用 `softdep ixgbe pre: vep1400`，交换机在
+  `ixgbe` 绑定之前就绪，开机不需要重载网卡。
+* **它是正常的 Linux 公民**：systemd 单元、`modprobe` 参数、debugfs、`dmesg`
+  日志，以及一把串行化 SMI 访问的互斥锁。
 
-Reasons the userspace tool exists at all:
+那用户态工具为什么还要存在：
 
-* VyOS has no compiler and no kernel headers, so the module simply cannot be
-  built there — this is the whole reason the tool was written.
-* It is also the only way to look at the switch on a machine where you do not
-  want to (or cannot) taint the kernel, and it is a good diagnostic: `info`,
-  `phy` and `watch` work without changing a single register.
+* VyOS 没有编译器也没有内核头文件，模块在那儿根本编不出来 —— 这就是写它的全部原因。
+* 在不想（或不能）给内核加污点的机器上，它也是唯一能看交换机状态的办法，而且
+  诊断很好用：`info`、`phy`、`watch` 不改任何寄存器。
 
-Safety: the tool refuses `init`/`reset` while `vep1400.ko` is loaded (override
-with `--force`), because two masters on the same bit-banged SMI bus would
-corrupt each other's transactions. For the same reason, do not use the tool's
-`info`/`phy` as the primary source when the module is loaded — the module's
-`/sys/kernel/debug/vep1400/` files are mutex-protected and authoritative.
+安全设计：模块已加载时，工具会**拒绝** `init`/`reset`（加 `--force` 可强制），
+因为两个「主人」同时位操作同一条 SMI 总线会互相破坏事务。同理，模块加载时不要拿
+工具的 `info`/`phy` 当权威数据 —— 模块的 `/sys/kernel/debug/vep1400/` 有互斥锁保护，
+那个才是准的。
 
-## Using the ports
+## 使用这些端口
 
-`vep1400-net.service` runs at boot and creates `GE1`…`GE6`. Configure them like
-any other interface, for example with `/etc/network/interfaces`:
+`vep1400-net.service` 开机创建 `GE1`…`GE6`，像普通网卡一样配置即可，
+例如 `/etc/network/interfaces`：
 
 ```
 auto GE1
 iface GE1 inet dhcp
 ```
 
-or NetworkManager:
+或者 NetworkManager：
 
 ```sh
 nmcli con add type ethernet ifname GE1 con-name GE1 ipv4.method auto
 ```
 
-> **Never** assign an address to `eno1`/`eno2`. They are the internal switch
-> uplinks and carry tagged traffic only.
+> **不要**给 `eno1`/`eno2` 配地址。它们是内部交换机上行口，只承载带标签的
+> 流量。
 >
-> **Never** bridge two `GE*` interfaces together. They already share one
-> broadcast domain through the switch (only the VLAN keeps them apart), so a
-> bridge creates a loop.
+> **不要**把两个 `GE*` 桥接在一起。它们在交换芯片内部本来就属于同一广播域
+> （仅靠 VLAN 隔离），桥接会造成环路。
 
-Two ports on the same subnet are fine, but Linux keeps a single route per
-subnet — the driver already sets `arp_ignore=1` and `arp_announce=2` on the
-`GE*` devices so replies leave through the port the request arrived on.
+两个端口配在同一网段是允许的，但 Linux 同一网段只保留一条路由 —— 驱动为此
+在 `GE*` 上默认设置了 `arp_ignore=1` 和 `arp_announce=2`，保证回包从收到请求
+的那个口发出。
 
-## Verify
+## 验证
 
 ```sh
 sudo /usr/lib/vep1400/vep1400-report.sh
 ```
 
-A healthy boot looks like this:
+正常启动的内核日志：
 
 ```
 vep1400: iSMT bus 0 (SMBus iSMT adapter at dfe3c000)
@@ -433,8 +455,7 @@ vep1400: GE3 link up (1G)
 vep1400: GE6 link up (1G)
 ```
 
-`/sys/kernel/debug/vep1400/info` summarises the driver state, including whether
-the X553 strap could be applied:
+`/sys/kernel/debug/vep1400/info` 汇总驱动状态，包括 X553 速率档位是否写入成功：
 
 ```
 switch_id    0x1901 (88E6190 rev 1)
@@ -446,8 +467,8 @@ cpu_port_10   up
 cpu_port_9    up
 ```
 
-`/sys/kernel/debug/vep1400/ports` shows every switch port (`up`/`down` is the
-switch's own view):
+`/sys/kernel/debug/vep1400/ports` 显示每个交换端口的实时状态（`up`/`down` 是
+交换芯片自己的视角）：
 
 ```
 port status mac_ctl ctl0 pvid ctl2 led link
@@ -460,7 +481,7 @@ port status mac_ctl ctl0 pvid ctl2 led link
 10   0x0e49 0x203e  0x007f 1    0x2c80 0x0022 up
 ```
 
-Is a single port suspicious?
+某个口表现异常时：
 
 ```sh
 sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3
@@ -472,143 +493,129 @@ port 3: link up  speed=1G  duplex=full  an=on  an-complete=yes
   peer : anlpar=0x4de1 (10/100), 1000t-status=0x7800 -> [100FD 100HD 10FD 10HD]
 ```
 
-It prints both sides' autonegotiation advertisement, which immediately shows
-whether the peer is a 10/100-only device or the cable is bad.
+它会打印本端和对端各自的自协商能力，一眼就能看出是对端只有 10/100，还是网线
+质量有问题。
 
-## Module parameters
+## 模块参数
 
-Set them in `/etc/modprobe.d/vep1400.conf` (a default file is installed):
+在 `/etc/modprobe.d/vep1400.conf` 中设置（安装时已生成默认文件）：
 
-| Parameter | Default | Meaning |
+| 参数 | 默认 | 说明 |
 |---|---|---|
-| `watchdog` | `1` | Disarm the PIC watchdog. Without it the board reboots every 4–5 minutes. |
-| `sfp_tx` | `1` | Clear `TX_DISABLE` on both SFP cages (board CPLD 0x31). |
-| `x553_speed` | `1000` | X553 backplane strap: `1000`, `2500` or `0` (keep the NVM value). |
-| `phy_speed` | `0` | `0` = front panel autonegotiation. `10`/`100`/`1000` force a speed. |
-| `led_init` | `1` | Program the front panel LED registers. |
-| `bus_num` | `-1` | iSMT bus number for the watchdog/SFP I²C; `-1` = find it by name. |
-| `p2sb_bar_addr` | `0` | P2SB MMIO BAR; `0` = autodetect (normally works). |
+| `watchdog` | `1` | 关闭 PIC 硬件看门狗。不关的话机器每 4–5 分钟重启一次。 |
+| `sfp_tx` | `1` | 清除两个 SFP 笼的 `TX_DISABLE`（板载 CPLD 0x31）。 |
+| `x553_speed` | `1000` | X553 背板速率档位：`1000`、`2500`，或 `0`（保留 NVM 值）。 |
+| `phy_speed` | `0` | `0` = 前面板自协商；`10`/`100`/`1000` 强制速率。 |
+| `led_init` | `1` | 初始化前面板 LED 寄存器。 |
+| `bus_num` | `-1` | 看门狗/SFP 所用 iSMT 总线号；`-1` 表示按名字自动查找。 |
+| `p2sb_bar_addr` | `0` | P2SB MMIO BAR；`0` 表示自动探测（一般都能探测到）。 |
 
-Contents of `/etc/modprobe.d/vep1400.conf`:
+`/etc/modprobe.d/vep1400.conf` 的默认内容：
 
 ```
 softdep ixgbe pre: vep1400
 options vep1400 watchdog=1 sfp_tx=1 x553_speed=1000 phy_speed=0 led_init=1
 ```
 
-The `softdep` matters: the driver programs the X553 `NW_MNG_IF_SEL` strap, and
-`ixgbe` reads that strap exactly once when it probes. Loading `vep1400` first
-means the uplinks come up at 1G without unloading anything.
+`softdep` 这一行很关键：驱动要写 X553 的 `NW_MNG_IF_SEL` 速率档位，而 `ixgbe`
+只在 probe 时读一次该寄存器。先加载 `vep1400` 就能让上行口直接以 1G 起来，
+无需卸载任何模块。
 
-Most distributions keep `ixgbe` inside the initramfs, where the module cannot be
-ordered first — `/sys/kernel/debug/vep1400/info` then reports `x553_strap busy`,
-and `vep1400-net.service` reloads `ixgbe` once during boot (before any address
-is configured, so nothing notices). Installing with `--initramfs` avoids that:
-`vep1400` is then already loaded inside the initramfs and the strap is applied
-before `ixgbe` binds.
+多数发行版把 `ixgbe` 放进了 initramfs，模块在里面无法排到它前面 —— 此时
+`/sys/kernel/debug/vep1400/info` 会显示 `x553_strap busy`，`vep1400-net.service`
+会在开机时重新加载一次 `ixgbe`（此时还没有配置任何地址，不会有影响）。用
+`--initramfs` 安装可以避免这次重载：模块已经在 initramfs 里加载，速率档位在
+`ixgbe` 绑定之前就写好了。
 
-If you load the module by hand after `ixgbe` is already up, reload the NIC
-driver yourself:
+如果是手动在 `ixgbe` 之后加载模块，需要自行重新加载网卡驱动：
 
 ```sh
 sudo modprobe -r ixgbe && sudo modprobe ixgbe
 ```
 
-## How the 1G link works
+## 原理：关于 1G 协商
 
-Getting a reliable gigabit link took some reverse engineering, and the details
-are worth knowing when something misbehaves:
+把千兆协商做稳定花了不少逆向工作，这些细节在排障时很有用：
 
-* **The board strap is wrong.** The front panel PHYs come out of reset with
-  `1000BASE-T control (reg 0x09) = 0x0e00`, i.e. *manual master* **and**
-  *manual slave* at the same time. Autonegotiation then never completes and the
-  port falls back. The driver rewrites it to `0x0200` (automatic
-  master/slave).
-* **The PHYs are powered down.** `BMCR = 0x1940` after reset. The driver powers
-  them up once with `BMCR = 0x1140 | AN_RESTART`.
-* **The PHYs are written exactly once, at load time.** Every `BMCR` write
-  restarts autonegotiation, so a driver that "helps" during cable insertion
-  keeps killing the negotiation it is trying to speed up. A former
-  fallback/forcing state machine did exactly that and made 1G links unreliable;
-  it is gone. The link monitor is read-only.
-* **Some peers need 6–12 s.** That is normal for 1000BASE-T autonegotiation and
-  is not a driver problem. The kernel log reports the transition, and
-  `vep1400-linkdiag.sh` shows whether the peer advertises 1000BASE-T at all.
-* **2.5G does not link on this board.** Neither the X553 KR PHY nor the
-  88E6190 2500BASE-X PCS completes autonegotiation in that mode. Leave
-  `x553_speed=1000`.
+* **板子上的 strap 是错的。** 前面板 PHY 复位后 `1000BASE-T 控制寄存器
+  (0x09) = 0x0e00`，同时置了"手动 master"和"手动 slave"，是非法组合，自协商
+  永远无法完成。驱动把它改写成 `0x0200`（自动 master/slave）。
+* **PHY 默认是下电的。** 复位后 `BMCR = 0x1940`。驱动用
+  `BMCR = 0x1140 | AN_RESTART` 上电并启动一次自协商。
+* **PHY 只在加载时写一次。** 任何一次 `BMCR` 写入都会重启自协商，所以"帮忙"
+  式的插线检测反而会不断打断协商 —— 早期的 fallback/强制速率状态机正是因此
+  导致千兆不稳定，现已彻底删除。链路监视只读不写。
+* **有些对端要 6–12 秒。** 这是 1000BASE-T 自协商的正常时间，不是驱动问题。
+  内核日志会记录状态变化，`vep1400-linkdiag.sh` 能确认对端到底有没有宣告
+  1000BASE-T。
+* **2.5G 在本机上无法协商。** X553 的 KR PHY 和 88E6190 的 2500BASE-X PCS
+  在该模式下都无法完成自协商，请保持 `x553_speed=1000`。
 
-Measured on the reference unit: 899–909 Mbit/s between two front panel ports
-(loop cable), 927–931 Mbit/s to an RTL8153 USB NIC, and 911 Mbit/s of payload
-over a 400 MB TCP transfer — the VLAN split costs nothing measurable.
+参考机实测：两个前面板口之间打环 899–909 Mbit/s，对 RTL8153 USB 网卡
+927–931 Mbit/s，400 MB TCP 传输有效载荷 911 Mbit/s，VLAN 拆分没有可测量的
+开销。
 
-## Troubleshooting
+## 排障
 
-**`GE1`…`GE6` are missing.**
-`systemctl status vep1400-net` and `journalctl -u vep1400-net`. The script loads
-`ixgbe` if needed and then needs `eno1` and `eno2`; if `ixgbe` had already
-probed before the strap was applied, `/sys/kernel/debug/vep1400/info` reports
-`x553_strap busy` and the script reloads `ixgbe` once by itself.
+**没有 `GE1`…`GE6`。**
+看 `systemctl status vep1400-net` 与 `journalctl -u vep1400-net`。脚本会按需加载
+`ixgbe`，然后需要 `eno1`/`eno2`；如果 `ixgbe` 在速率档位写入之前就已经 probe
+（`/sys/kernel/debug/vep1400/info` 里显示 `x553_strap busy`），脚本会自动重载
+一次 `ixgbe`。
 
-**`vep1400: unexpected switch id`.**
-The SMI read is out of sync. Check `dmesg | grep 'P2SB'`: the BAR should be
-`0xfd000000`-ish and `north reg0` must not be `0xffffffff`. On unusual
-firmware versions pass `p2sb_bar_addr=` explicitly.
+**`vep1400: unexpected switch id`。**
+SMI 读取失步。检查 `dmesg | grep P2SB`：BAR 应接近 `0xfd000000`，
+`north reg0` 不能是 `0xffffffff`。特殊固件版本可显式传 `p2sb_bar_addr=`。
 
-**`vep1400: no iSMT SMBus adapter`.**
-`i2c_ismt` did not load. `modprobe i2c_ismt`, or pass `bus_num=<n>`. Without it
-only the watchdog and SFP TX are skipped; the ports still work — but the board
-will reboot after 4–5 minutes.
+**`vep1400: no iSMT SMBus adapter`。**
+`i2c_ismt` 没加载。`modprobe i2c_ismt`，或传 `bus_num=<n>`。此时只会跳过看门狗
+和 SFP 发射，端口仍然可用 —— 但机器会在 4–5 分钟后重启。
 
-**The board reboots every few minutes.**
-The watchdog was not disarmed: `watchdog=1`, and the module must load early
-(correct `softdep` + `vep1400.service` enabled).
+**机器每隔几分钟重启。**
+看门狗没关掉：确认 `watchdog=1`，且模块加载足够早（`softdep` 正确、
+`vep1400.service` 已 enable）。
 
-**A port links at 100 Mbps.**
-Run `vep1400-linkdiag.sh <n>`. If the peer also advertises 1000BASE-T, the cable
-or the peer's port is the problem — this board has been seen to negotiate 100M
-with a marginal cable and with a router LAN port that turned out not to be
-gigabit.
+**某个口只协商到 100M。**
+运行 `vep1400-linkdiag.sh <n>`。若对端也宣告 1000BASE-T，问题在网线或对端口；
+本机实测过"劣质网线 + 路由器上实际不是千兆的 LAN 口"两种情况都会落到 100M。
 
-**LEDs are dark.**
-`led_init=1` (default). The parameter is read-only; to re-run the programming
-reload the module (`modprobe -r vep1400 && modprobe vep1400`).
+**LED 不亮。**
+`led_init=1`（默认）。该参数是只读的，要重新初始化 LED 请重载模块
+（`modprobe -r vep1400 && modprobe vep1400`）。
 
-**Nothing works after a kernel upgrade.**
-That is what DKMS is for; check `dkms status` and `journalctl -u dkms`. Without
-`--no-dkms` the module is rebuilt automatically for the new kernel.
+**升级内核后失效。**
+这正是 DKMS 的用途；检查 `dkms status` 与 `journalctl -u dkms`。没有用
+`--no-dkms` 时模块会自动为新内核重编。
 
-## Layout
+## 目录结构
 
 ```
-src/vep1400_switch.c   88E6190 bring-up, X553 strap, PHYs, LEDs, link monitor, debugfs
-src/vep1400_board.c    I²C: PIC watchdog, SFP TX_DISABLE
-src/vep1400_mdio.h     P2SB pads, bit-banged SMI, VTU/SERDES/PHY helpers
-scripts/               netup, teardown, report, linkdiag
+src/vep1400_switch.c   88E6190 初始化、X553 档位、PHY、LED、链路监视、debugfs
+src/vep1400_board.c    I²C：PIC 看门狗、SFP TX_DISABLE
+src/vep1400_mdio.h     P2SB 焊盘、位操作 SMI、VTU/SERDES/PHY 辅助函数
+scripts/               netup、teardown、report、linkdiag
 scripts/vep1400-userspace.py
-                       the same bring-up without a kernel module (VyOS)
-vyos/setup.sh          installs the userspace tool + the VyOS boot hook
+                       不需要内核模块的同一套初始化（VyOS 用）
+vyos/setup.sh          安装用户态工具 + VyOS 开机钩子
 vyos/vyos-postconfig-bootup.script
-systemd/               vep1400.service, vep1400-net.service
-modprobe/vep1400.conf  softdep + default parameters
-initramfs/             optional early-load hook
-get.sh                 download-and-install without git
+systemd/               vep1400.service、vep1400-net.service
+modprobe/vep1400.conf  softdep 与默认参数
+initramfs/             可选的提前加载钩子
+get.sh                 免 git 下载安装脚本
 ```
 
-The driver is intentionally small and read-only after load: 3 s link polling of
-the PHY status registers, a few debugfs files, and no timer touches hardware.
+驱动刻意保持精简，加载完成后对硬件只读：每 3 秒读一次 PHY 状态寄存器，几个
+debugfs 文件，没有任何会写硬件的定时器。
 
-## Notes
+## 备注
 
-* The board is **passively cooled** — there is no fan and no fan controller on
-  the SMBus (no device at 0x1b). CPU temperature comes from the CPU's own
-  `coretemp` sensor, ~47–50 °C idle.
-* Front panel PHYs, switch and uplinks are configured once. A cable move, a
-  speed change or a peer reboot is handled by the PHYs' own state machine.
-* Register sequences were derived from publicly available documentation and
-  from observing the vendor firmware; this project contains no Dell or VMware
-  code.
+* 本机**无风扇**，纯被动散热，SMBus 上也没有风扇控制器（0x1b 无设备）。CPU
+  温度来自 CPU 自带的 `coretemp` 传感器，空闲约 47–50 °C。
+* 前面板 PHY、交换芯片和上行口只配置一次。换线、改速率、对端重启都由 PHY 自身
+  状态机处理。
+* 寄存器序列来自公开资料与对原厂固件行为的观察；本项目不含任何 Dell / VMware
+  代码。
 
-## License
+## 许可
 
-GPL-2.0 — see [LICENSE](LICENSE).
+GPL-2.0 —— 见 [LICENSE](LICENSE)。

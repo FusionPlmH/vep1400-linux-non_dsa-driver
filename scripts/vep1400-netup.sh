@@ -7,11 +7,16 @@
 #   SFP1     -> 0000:05:00.1
 #   SFP2     -> 0000:05:00.0
 #
-# The switch, the X553 1G strap and the front panel PHYs are programmed by
-# vep1400.ko.  modprobe loads it before ixgbe ("softdep ixgbe pre: vep1400"),
-# so nothing has to be unloaded here.  Only if the uplinks are still down -
-# which means something probed ixgbe before us, e.g. a built-in ixgbe or a
-# custom initramfs - the driver is reloaded once.
+# This script works with either implementation:
+#
+#   kernel module - vep1400.ko is loaded first (softdep ixgbe pre: vep1400),
+#                   so nothing has to be unloaded here.  Only if something
+#                   probed ixgbe before us (a built-in ixgbe, a custom
+#                   initramfs) the driver is reloaded once.
+#   userspace     - vep1400.service already ran vep1400-userspace.py init, so
+#                   there is no module to touch and no debugfs to consult.
+#
+# The mode is detected, not configured.
 
 set -u
 
@@ -22,6 +27,10 @@ DEBUGFS_PORTS="$DEBUGFS/ports"
 
 log() { echo "$TAG: $*"; }
 die() { echo "$TAG: ERROR: $*" >&2; exit 1; }
+
+module_present() {
+	command -v modinfo >/dev/null 2>&1 && modinfo -n "$MODULE" >/dev/null 2>&1
+}
 
 is_vep1400() {
 	local f
@@ -65,6 +74,7 @@ switch_port_up() {
 }
 
 cpu_links_up() {
+	[ -r "$DEBUGFS_PORTS" ] || return 0
 	switch_port_up 9 && switch_port_up 10
 }
 
@@ -127,13 +137,25 @@ vlan_mac() {
 }
 
 ensure_vlan() {
-	local parent=$1 name=$2 vid=$3 mac=$4
+	local parent=$1 name=$2 vid=$3 mac=$4 alt
 
 	if ip link show "$name" >/dev/null 2>&1; then
 		ip link set dev "$name" address "$mac" 2>/dev/null || true
 		ip link set dev "$name" up
 		return 0
 	fi
+
+	# A VLAN with the same parent and id may already exist under another
+	# name - a VyOS "vif 3" creates eth0.3, for instance. The kernel refuses
+	# a second device for the same (parent, id), so reuse it instead of
+	# fighting over it.
+	alt="$parent.$vid"
+	if ip link show "$alt" >/dev/null 2>&1; then
+		log "$name already exists as $alt, using it as is"
+		ip link set dev "$alt" up 2>/dev/null || true
+		return 0
+	fi
+
 	ip link add link "$parent" name "$name" type vlan id "$vid" || return 1
 	ip link set dev "$name" address "$mac" 2>/dev/null || true
 	ip link set dev "$name" up
@@ -147,24 +169,36 @@ is_vep1400 || { log "not a VEP1400/Edge 610, nothing to do"; exit 0; }
 
 [ -d /sys/kernel/debug ] || mount -t debugfs none /sys/kernel/debug 2>/dev/null
 
-modprobe "$MODULE" || die "modprobe $MODULE failed (see dmesg)"
+if module_present; then
+	MODE=module
+	modprobe "$MODULE" || die "modprobe $MODULE failed (see dmesg)"
+else
+	MODE=userspace
+	log "no vep1400 module installed, using the userspace bring-up"
+fi
 
 ensure_ixgbe || die "could not load ixgbe"
 
 CONDUIT_A=$(wait_netdev 0000:03:00.0) || die "no netdev for 0000:03:00.0 (is ixgbe loaded?)"
 CONDUIT_B=$(wait_netdev 0000:03:00.1) || die "no netdev for 0000:03:00.1 (is ixgbe loaded?)"
 
-if strap_busy; then
+if [ "$MODE" = module ] && strap_busy; then
 	log "ixgbe probed before the X553 strap was applied, reloading it once"
 	reload_ixgbe || die "could not reload ixgbe (see dmesg)"
 	CONDUIT_A=$(wait_netdev 0000:03:00.0) || die "0000:03:00.0 netdev missing"
 	CONDUIT_B=$(wait_netdev 0000:03:00.1) || die "0000:03:00.1 netdev missing"
 fi
 
-if cpu_links_up; then
-	log "both X553 CPU links are up"
+if [ -r "$DEBUGFS_PORTS" ]; then
+	if cpu_links_up; then
+		log "both X553 CPU links are up"
+	else
+		log "WARNING: switch CPU ports 9/10 are down (check x553_speed)"
+	fi
 else
-	log "WARNING: switch CPU ports 9/10 are down (check x553_speed)"
+	log "CPU link state not exposed (userspace mode):" \
+	    "$(cat "/sys/class/net/$CONDUIT_A/operstate" 2>/dev/null)" \
+	    "$(cat "/sys/class/net/$CONDUIT_B/operstate" 2>/dev/null)"
 fi
 log "uplinks: $CONDUIT_A (switch port 10), $CONDUIT_B (switch port 9)"
 
