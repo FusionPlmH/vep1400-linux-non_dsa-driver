@@ -53,16 +53,26 @@ netdev_at() {
 	ls "$dir" 2>/dev/null | head -1
 }
 
+udev_settle() {
+	command -v udevadm >/dev/null 2>&1 || return 0
+	udevadm settle --timeout=10 2>/dev/null || true
+}
+
 wait_netdev() {
 	local pci=$1 i dev
 
 	for ((i = 0; i < 200; i++)); do
 		dev=$(netdev_at "$pci" || true)
 		if [ -n "${dev:-}" ]; then
-			echo "$dev"
-			return 0
+			# Right after modprobe the kernel name (eth0) is still in place
+			# for a moment; udev renames it to eno1 shortly after and the
+			# device disappears under that old name.
+			if udev_settle && [ "$(netdev_at "$pci" || true)" = "$dev" ]; then
+				echo "$dev"
+				return 0
+			fi
 		fi
-		sleep 0.1
+		sleep 0.2
 	done
 	return 1
 }

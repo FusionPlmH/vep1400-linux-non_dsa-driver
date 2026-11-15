@@ -82,8 +82,11 @@ fi
 echo "== uplinks =="
 for dev in eno1 eno2 SFP1 SFP2 eno3 eno4 eth0 eth1 eth2 eth3; do
 	[ -e "/sys/class/net/$dev" ] || continue
-	echo "-- $dev ($(cat "/sys/class/net/$dev/operstate"))"
-	ethtool "$dev" 2>/dev/null | grep -E 'Speed|Duplex|Link detected'
+	speed=$(cat "/sys/class/net/$dev/speed" 2>/dev/null)
+	echo "-- $dev ($(cat "/sys/class/net/$dev/operstate"), ${speed:--} Mb/s)"
+	if command -v ethtool >/dev/null 2>&1; then
+		ethtool "$dev" 2>/dev/null | grep -E 'Duplex|Link detected'
+	fi
 done
 echo
 
