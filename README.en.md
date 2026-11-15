@@ -156,20 +156,50 @@ switch configuration, which this version does not handle.
 
 ## Port map
 
-| Front panel | Switch port | VLAN | Uplink (Debian / PVE · VyOS) |
-|---|---|---|---|
-| `GE1` `GE2` `GE3` | 1 2 3 | 1 2 3 | `eno1` · `eth0` (03:00.0) |
-| `GE4` `GE5` `GE6` | 4 5 6 | 4 5 6 | `eno2` · `eth1` (03:00.1) |
-| `SFP1` / `SFP2` | — | untagged | 05:00.1 / 05:00.0 |
+Front panel ports 1–6 are six ordinary interfaces, `GE1`…`GE6`, on Debian /
+Ubuntu / PVE. VyOS rejects those names, so it uses vifs on the two uplinks. The
+SFP cages keep whatever name the kernel gave them on both.
 
-`GE*` inherit their uplink's MAC plus a per-port offset (`+0x0a`…`+0x0f`). The
-SFP cages are the other two X553s (`05:00.0` / `05:00.1`); their kernel names are
-whatever udev picks — `eno3`/`eno4` on both Debian 13 and VyOS 1.3.4 here, just
+| Front panel | Switch port | VLAN | Debian / Ubuntu / PVE | VyOS |
+|---|---|---|---|---|
+| 1 | 1 | 1 | `GE1` | `eth0 vif 1` |
+| 2 | 2 | 2 | `GE2` | `eth0 vif 2` |
+| 3 | 3 | 3 | `GE3` | `eth0 vif 3` |
+| 4 | 4 | 4 | `GE4` | `eth1 vif 4` |
+| 5 | 5 | 5 | `GE5` | `eth1 vif 5` |
+| 6 | 6 | 6 | `GE6` | `eth1 vif 6` |
+| SFP1 | — | untagged | `SFP1` | `eno4` (05:00.1) |
+| SFP2 | — | untagged | `SFP2` | `eno3` (05:00.0) |
+
+**Never** address the uplinks themselves: `eno1` / `eno2` on Debian / Ubuntu /
+PVE (03:00.0 / 03:00.1), `eth0` / `eth1` on VyOS. `GE*` inherit their uplink's
+MAC plus a per-port offset (`+0x0a`…`+0x0f`). The SFP cages keep their udev
+names (`eno3`/`eno4` on both Debian 13 and VyOS 1.3.4 here, order as above) —
 check `ip -br link`.
 
 ## Using the ports
 
-**Debian / Proxmox VE** (ifupdown):
+**Debian / Proxmox VE** (ifupdown) — `GE*` behave like any other NIC:
+
+```sh
+# /etc/network/interfaces
+auto GE1
+iface GE1 inet dhcp
+```
+
+**Ubuntu Server** (netplan):
+
+```yaml
+# /etc/netplan/60-ge.yaml
+network:
+  version: 2
+  ethernets:
+    GE1:
+      dhcp4: true
+```
+
+**VyOS**: it rejects interface names like `GE1` (`Invalid Ethernet interface
+name`), so use native vifs on the two uplinks — `vif N` is front panel port N:
 
 ```sh
 # /etc/network/interfaces
@@ -188,11 +218,12 @@ commit
 save
 ```
 
-True on both:
+True everywhere:
 
-- **Never** put an address on the uplinks themselves (right column of the table above)
+- **Never** put an address on the uplinks themselves (see the note above)
 - **Never** bridge two ports — they already share a broadcast domain, that loops
-- Two ports on one subnet is fine; the driver sets `arp_ignore=1` / `arp_announce=2`
+- Two ports on one subnet is fine; `GE*` get `arp_ignore=1` / `arp_announce=2`
+  automatically, VyOS vifs need them set by hand
 
 ## Verify
 

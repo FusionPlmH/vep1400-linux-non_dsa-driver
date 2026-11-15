@@ -141,24 +141,44 @@ Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支�
 
 ## 端口映射
 
-| 前面板 | 交换端口 | VLAN | 上行口（Debian / PVE · VyOS） |
-|---|---|---|---|
-| `GE1` `GE2` `GE3` | 1 2 3 | 1 2 3 | `eno1` · `eth0`（03:00.0） |
-| `GE4` `GE5` `GE6` | 4 5 6 | 4 5 6 | `eno2` · `eth1`（03:00.1） |
-| `SFP1` / `SFP2` | — | 无标签 | 05:00.1 / 05:00.0 |
+前面板 1–6 在 Debian / Ubuntu / PVE 上是六个普通网口 `GE1`…`GE6`；VyOS 不接受这种
+接口名，用的是两个上行口上的 vif。SFP 笼子在两套系统里都还是内核自己的名字。
 
-`GE*` 的 MAC 取自对应上行口并加偏移（`+0x0a`…`+0x0f`），保证唯一。SFP 是另外两个
-X553 口（`05:00.0` / `05:00.1`），内核名由 udev 决定 —— Debian 13 与 VyOS 1.3.4 上
-实测都是 `eno3`/`eno4`，`ip -br link` 一看便知。
+| 前面板 | 交换端口 | VLAN | Debian / Ubuntu / PVE | VyOS |
+|---|---|---|---|---|
+| 1 | 1 | 1 | `GE1` | `eth0 vif 1` |
+| 2 | 2 | 2 | `GE2` | `eth0 vif 2` |
+| 3 | 3 | 3 | `GE3` | `eth0 vif 3` |
+| 4 | 4 | 4 | `GE4` | `eth1 vif 4` |
+| 5 | 5 | 5 | `GE5` | `eth1 vif 5` |
+| 6 | 6 | 6 | `GE6` | `eth1 vif 6` |
+| SFP1 | — | 无标签 | `SFP1` | `eno4`（05:00.1） |
+| SFP2 | — | 无标签 | `SFP2` | `eno3`（05:00.0） |
+
+上行口本身**永远不要配地址**：Debian / Ubuntu / PVE 上是 `eno1` / `eno2`
+（03:00.0 / 03:00.1），VyOS 上是 `eth0` / `eth1`。`GE*` 的 MAC 取自对应上行口并加偏移
+（`+0x0a`…`+0x0f`），保证唯一。SFP 口的内核名由 udev 决定（实测 Debian 13 与 VyOS
+1.3.4 都是 `eno3`/`eno4`，顺序见上表），`ip -br link` 一看便知。
 
 ## 使用端口
 
-**Debian / Proxmox VE**（ifupdown）：
+**Debian / Proxmox VE**（ifupdown）—— `GE*` 和普通网卡没有区别：
 
 ```sh
 # /etc/network/interfaces
 auto GE1
 iface GE1 inet dhcp
+```
+
+**Ubuntu Server**（netplan）：
+
+```yaml
+# /etc/netplan/60-ge.yaml
+network:
+  version: 2
+  ethernets:
+    GE1:
+      dhcp4: true
 ```
 
 **VyOS**：不接受 `GE1` 这类接口名（会报 `Invalid Ethernet interface name`），要用
@@ -172,11 +192,11 @@ commit
 save
 ```
 
-两种系统都适用：
+各系统都适用：
 
-- **不要**给上行口本身配地址（上面表格右边那列）
+- **不要**给上行口本身配地址（见上一节）
 - **不要**把两个 `GE*`（VyOS 上是两个 vif）桥接 —— 它们在交换机里本就同广播域，桥接会成环
-- 同网段多口是允许的，驱动已给 `GE*` 设好 `arp_ignore=1` / `arp_announce=2`
+- 同网段多口是允许的；`GE*` 上已设好 `arp_ignore=1` / `arp_announce=2`，VyOS 的 vif 要自己加
 
 ## 验证
 
