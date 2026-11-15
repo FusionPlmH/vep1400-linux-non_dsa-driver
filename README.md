@@ -81,21 +81,16 @@ ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 自动走用户态（它没有编译器，也没有内核头文件）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+GET=https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh
+curl -fsSL $GET | sudo bash                     # 自动选择
+curl -fsSL $GET | sudo bash -s -- --userspace   # 强制用户态（其它选项见下表）
 ```
 
-强制改用用户态实现（比如头文件装不上，或者不想污染内核）：
+没有 `curl` 就把 `curl -fsSL $GET` 换成 `wget -qO- $GET`；GitHub 慢就换镜像
+（`VEP1400_TARBALL` 指向完整归档）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
-  | sudo bash -s -- --userspace
-```
-
-没有 `curl` 就换 `wget -qO-`（前缀同上）；GitHub 慢就用镜像：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
-  | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
+curl -fsSL $GET | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 ```
 
 用 git：
@@ -103,8 +98,7 @@ curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dr
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh              # 按系统自动选实现
-sudo ./install.sh --userspace  # 或强制用户态
+sudo ./install.sh              # 自动选择；加 --userspace 强制用户态
 ```
 
 | 选项 | 作用 |

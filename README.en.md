@@ -84,27 +84,21 @@ ip route get 1.1.1.1        # which interface the default route leaves through
 ping -c1 deb.debian.org     # resolves and replies -> link, route and DNS are fine
 ```
 
-Now the one-liner. The implementation is **chosen automatically**: Debian /
+Then the one-liner. The implementation is **chosen automatically**: Debian /
 Ubuntu / PVE get the kernel module, VyOS gets the userspace one (it has no
 compiler and no kernel headers):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+GET=https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh
+curl -fsSL $GET | sudo bash                     # automatic
+curl -fsSL $GET | sudo bash -s -- --userspace   # force userspace (see the table)
 ```
 
-Forcing the userspace implementation (no headers available, or you do not want a
-tainted kernel):
+No `curl`? Replace `curl -fsSL $GET` with `wget -qO- $GET`. GitHub slow? Use the
+mirror (`VEP1400_TARBALL` points at a full archive):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
-  | sudo bash -s -- --userspace
-```
-
-No `curl`? Use `wget -qO-` with the same prefix. GitHub slow? Use the mirror:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
-  | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
+curl -fsSL $GET | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 ```
 
 With git:
@@ -112,8 +106,7 @@ With git:
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh              # auto-selects the implementation
-sudo ./install.sh --userspace  # or force userspace
+sudo ./install.sh              # automatic; add --userspace to force the tool
 ```
 
 | Option | Effect |
