@@ -13,15 +13,11 @@ example on VyOS (no compiler, no kernel headers in the image).
   vep1400-userspace.py phy           dump the front panel PHY registers
   vep1400-userspace.py diag [n]      decode one port's autonegotiation
   vep1400-userspace.py watch [sec]   follow link changes (default 60 s)
-  vep1400-userspace.py vlan          create GE1..GE6 on top of the uplinks
-  vep1400-userspace.py unvlan        remove them again
 
 Options:
   --reset        reset the switch first (drops all links for ~1s)
   --no-i2c       skip watchdog / SFP handling
   --force        allow init/reset even when vep1400.ko owns the switch
-  --uplink-a IF  uplink for GE1..GE3 (default: autodetect)
-  --uplink-b IF  uplink for GE4..GE6 (default: autodetect)
 
 Which one to use: on Debian/Ubuntu/PVE prefer the kernel module (it survives
 kernel upgrades through DKMS and can program the X553 strap). This tool is for
@@ -29,14 +25,11 @@ systems where the module cannot be built - VyOS, appliances, immutable images -
 and for diagnostics.
 """
 
-from __future__ import print_function
-
 import ctypes
 import fcntl
 import mmap
 import os
 import struct
-import subprocess
 import sys
 import time
 
@@ -108,7 +101,6 @@ CMODE_1000BASE_X = 0x09
 
 FIRST_PORT, LAST_PORT = 1, 6
 CPU_PORT_A, CPU_PORT_B = 10, 9
-PORTS_PER_UPLINK = 3
 
 I2C_PIC = 0x22
 I2C_PIC2 = 0x24
@@ -640,81 +632,6 @@ def watch_links(smi, seconds):
 
 
 # --------------------------------------------------------------------------
-# VLAN devices
-
-
-def sh(*cmd):
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT)
-    out = p.communicate()[0].decode("utf-8", "replace")
-    return p.returncode, out.strip()
-
-
-def netdev_for_pci(pci):
-    d = "/sys/bus/pci/devices/%s/net" % pci
-    try:
-        names = os.listdir(d)
-    except OSError:
-        return None
-    return sorted(names)[0] if names else None
-
-
-def autodetect_uplinks():
-    a = netdev_for_pci("0000:03:00.0")
-    b = netdev_for_pci("0000:03:00.1")
-    if not a or not b:
-        raise Error("uplinks 0000:03:00.0/.1 have no netdev (ixgbe loaded?)")
-    return a, b
-
-
-def vlan_mac(base, idx):
-    head, last = base.rsplit(":", 1)
-    return "%s:%02x" % (head, (int(last, 16) + 10 + idx) & 0xFF)
-
-
-def create_vlans(up_a, up_b):
-    rc, out = sh("ip", "-br", "link")
-    if rc:
-        raise Error("ip link failed")
-    base = None
-    for line in out.splitlines():
-        if line.split()[0] == up_a:
-            parts = line.split()
-            base = parts[2] if len(parts) > 2 else None
-    if not base or base == "00:00:00:00:00:00":
-        base = "02:00:00:00:00:00"
-
-    for up, first, count in ((up_a, 1, PORTS_PER_UPLINK),
-                             (up_b, 4, PORTS_PER_UPLINK)):
-        sh("ip", "link", "set", up, "up")
-        for i in range(count):
-            name = "GE%d" % (first + i)
-            vid = str(first + i)
-            sh("ip", "link", "del", name)
-            rc, out = sh("ip", "link", "add", "link", up, "name", name,
-                         "type", "vlan", "id", vid)
-            if rc:
-                raise Error("could not create %s: %s" % (name, out))
-            sh("ip", "link", "set", name, "address",
-               vlan_mac(base, first + i - 1))
-            sh("ip", "link", "set", name, "up")
-            for key, val in (("arp_ignore", "1"), ("arp_announce", "2")):
-                path = "/proc/sys/net/ipv4/conf/%s/%s" % (name, key)
-                try:
-                    with open(path, "w") as f:
-                        f.write(val)
-                except IOError:
-                    pass
-            print("GE%d -> %s vlan %s (%s)"
-                  % (first + i, up, vid, vlan_mac(base, first + i - 1)))
-
-
-def remove_vlans():
-    for n in range(1, 7):
-        sh("ip", "link", "del", "GE%d" % n)
-
-
-# --------------------------------------------------------------------------
 
 
 def log(msg):
@@ -745,14 +662,11 @@ def main(argv):
 
     cmd = argv[1]
     args = argv[2:]
+    if cmd not in ("info", "init", "reset", "phy", "diag", "watch"):
+        die("unknown command %r (try --help)" % cmd)
+
     reset = "--reset" in args
     use_i2c = "--no-i2c" not in args
-    up_a = up_b = None
-    for i, a in enumerate(args):
-        if a == "--uplink-a":
-            up_a = args[i + 1]
-        if a == "--uplink-b":
-            up_b = args[i + 1]
 
     if cmd in ("init", "reset") and module_loaded() and "--force" not in args:
         die("vep1400.ko is loaded and already owns the switch.\n"
@@ -760,17 +674,6 @@ def main(argv):
             "       the systemd services instead, or pass --force to override.")
     if cmd in ("info", "phy", "watch"):
         warn_if_module()
-
-    if cmd == "unvlan":
-        remove_vlans()
-        log("GE1..GE6 removed")
-        return 0
-
-    if cmd == "vlan":
-        if not up_a or not up_b:
-            up_a, up_b = autodetect_uplinks()
-        create_vlans(up_a, up_b)
-        return 0
 
     smi = Smi()
     try:
@@ -806,9 +709,6 @@ def main(argv):
             switch_reset(smi)
             log("done, the switch is back at its power-on defaults")
             return 0
-
-        if cmd != "init":
-            die("unknown command %r (try --help)" % cmd)
 
         if use_i2c:
             try:
