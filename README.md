@@ -80,10 +80,12 @@ ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 然后一行命令装（实现按系统自动选择，VyOS 走用户态）：
 
 ```sh
-GET=https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh
-curl -fsSL $GET | sudo bash                     # 自动选择
-curl -fsSL $GET | sudo bash -s -- --userspace   # 强制用户态
+curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+wget -qO-  https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash -s -- --userspace
 ```
+
+三行分别是 curl 版、wget 版（等价，挑一个）和强制用户态。
 
 用 git：
 

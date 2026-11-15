@@ -88,10 +88,12 @@ Then the one-liner (the implementation is chosen automatically; VyOS gets the
 userspace one):
 
 ```sh
-GET=https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh
-curl -fsSL $GET | sudo bash                     # automatic
-curl -fsSL $GET | sudo bash -s -- --userspace   # force userspace
+curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+wget -qO-  https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash -s -- --userspace
 ```
+
+curl, the wget equivalent, and the userspace override.
 
 With git:
 
