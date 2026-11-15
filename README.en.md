@@ -168,14 +168,15 @@ SFP cages keep whatever name the kernel gave them on both.
 | 4 | 4 | 4 | `GE4` | `eth1 vif 4` |
 | 5 | 5 | 5 | `GE5` | `eth1 vif 5` |
 | 6 | 6 | 6 | `GE6` | `eth1 vif 6` |
-| SFP1 | — | untagged | `SFP1` | `eno4` (05:00.1) |
-| SFP2 | — | untagged | `SFP2` | `eno3` (05:00.0) |
+| SFP1 | — | untagged | `SFP1` | 05:00.1 (kernel name) |
+| SFP2 | — | untagged | `SFP2` | 05:00.0 (kernel name) |
 
 **Never** address the uplinks themselves: `eno1` / `eno2` on Debian / Ubuntu /
 PVE (03:00.0 / 03:00.1), `eth0` / `eth1` on VyOS. `GE*` inherit their uplink's
-MAC plus a per-port offset (`+0x0a`…`+0x0f`). The SFP cages keep their udev
-names (`eno3`/`eno4` on both Debian 13 and VyOS 1.3.4 here, order as above) —
-check `ip -br link`.
+MAC plus a per-port offset (`+0x0a`…`+0x0f`). On VyOS the SFP cages have no vif
+and keep a kernel name that **changes between boots** (`eth2`/`eth3` and
+`eno3`/`eno4` were both seen on this unit) — go by the PCI address above,
+`ip -br link` or `/sys/class/net/*/device` tells you which is which.
 
 ## Using the ports
 
