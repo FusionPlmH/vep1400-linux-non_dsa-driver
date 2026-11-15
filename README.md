@@ -2,17 +2,19 @@
 
 # Dell VEP1400 / VMware Edge 610 —— 标准 Linux 驱动
 
-把 **Dell VEP1400**（= **VMware SD-WAN Edge 610** 非 X 版，Atom C3308）的 6 个
-前面板 RJ45 口和 2 个 SFP 笼跑在**原版 Debian / Ubuntu / Proxmox VE / VyOS** 上
-—— 不用自编内核，不用设备树，不需要 DSA。
+把 **Dell VEP1400**（= **VMware SD-WAN Edge 610** 非 X 版，Atom C3308）的 6 个前面板
+RJ45 口和 2 个 SFP 笼跑在**原版 Debian / Ubuntu / Proxmox VE / VyOS** 上 ——
+不用自编内核，不用设备树，也不需要 DSA。
 
-```
+**快速开始** · [系统与实现](#系统与实现) · [端口映射](#端口映射) · [使用端口](#使用端口) · [验证](#验证) · [排障](#排障) · [硬件](#硬件) · [目录结构](#目录结构)
+
+```text
    GE1..GE3 ─┐
-             ├─ 88E6190 port 10 ─ 802.1Q ─ X553 03:00.0 ─ eno1
-   GE4..GE6 ─┤
-             └─ 88E6190 port  9 ─ 802.1Q ─ X553 03:00.1 ─ eno2
+             ├─ port 10 ─ 802.1Q ─ X553 03:00.0 ─ eno1
+   GE4..GE6 ─┤   88E6190
+             └─ port  9 ─ 802.1Q ─ X553 03:00.1 ─ eno2
 
-   SFP1 = X553 05:00.1        SFP2 = X553 05:00.0
+   SFP1 ─ X553 05:00.1          SFP2 ─ X553 05:00.0
 ```
 
 交换芯片是 Marvell 88E6190。常规做法是走 DSA，让内核把它拆成 `GE1`…`GE6` —— 但
@@ -30,14 +32,15 @@ ACPI/DT 描述。为一块板让每个发行版重编内核不现实，所以这
 
 ## 快速开始
 
-先在**能上网的通道**上把管理和外网准备好再动手 —— 装驱动要下内核头和包，而加载驱动
-会短暂打断 GE* 口。这块板只有一个管理面、纯被动散热，**无线是最省事的选择**；不要
-把某个 GE 口当作安装期间唯一的管理口。
+### ① 先把管理通道弄好
 
-**VyOS**（原生无线配置。`name-server` 这句别漏 —— VyOS 默认不配 DNS，缺了它后面
-`ping deb.debian.org` 一定失败，而 `ping 1.1.1.1` 却是通的）：
+装驱动要下内核头和包，而加载驱动会短暂打断 `GE*` 口。这块板只有一个管理面、纯被动
+散热，**无线是最省事的选择**；不要把某个 GE 口当作安装期间唯一的管理口。
 
-```
+**VyOS** —— `name-server` 这句别漏，VyOS 默认不配 DNS，缺了它 `ping deb.debian.org`
+一定失败，而 `ping 1.1.1.1` 却是通的：
+
+```text
 configure
 set system name-server 1.1.1.1
 set interfaces wireless wlan0 type station
@@ -50,7 +53,7 @@ commit
 save
 ```
 
-**Debian / Proxmox VE**（ifupdown + wpasupplicant，PVE 也是用这个文件）：
+**Debian / Proxmox VE** —— ifupdown + wpasupplicant，PVE 用的也是这个文件：
 
 ```sh
 apt install -y wpasupplicant
@@ -64,7 +67,7 @@ EOF
 ifup wlp2s0
 ```
 
-**Ubuntu Server**（netplan，写 `/etc/netplan/50-wifi.yaml` 后 `sudo netplan apply`）：
+**Ubuntu Server** —— netplan，写 `/etc/netplan/50-wifi.yaml` 后 `sudo netplan apply`：
 
 ```yaml
 network:
@@ -77,25 +80,25 @@ network:
       dhcp4: true
 ```
 
-（配置里的 `wlp2s0` 换成实际的无线网卡名，`ip -br link` 可查。）
+> 配置里的 `wlp2s0` 换成实际的无线网卡名，`ip -br link` 可查。
 
-装之前确认真的能上网 —— 下面两条命令 Debian / PVE / VyOS 都通用，也不用记网卡名：
+### ② 确认真的能上网
+
+两条命令 Debian / PVE / VyOS 通用，也不用记网卡名：
 
 ```sh
 ip route get 1.1.1.1        # 默认路由经哪个口出去
 ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 ```
 
-然后一行命令装（实现按系统自动选择，VyOS 走用户态）：
+### ③ 一行命令安装
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 wget -qO- https://neodev.team/get.sh | sudo bash                     # GitHub 不通时走镜像
 ```
 
-要加参数就在 `bash` 后面接 `-s -- <选项>`（见下表）。
-
-用 git：
+要加参数就在 `bash` 后面接 `-s -- <选项>`（见下表）。用 git 也一样：
 
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
@@ -113,21 +116,21 @@ sudo ./install.sh
 | `--no-start` | 装好并 enable，但本次不启动 |
 | `--force` | 就地替换已装的另一种实现 |
 
-卸载：`sudo ./uninstall.sh`（模块、`/usr` 下的用户态文件、VyOS 的 `/config` 文件一起清）
+卸载：`sudo ./uninstall.sh` —— 模块、`/usr` 下的用户态文件、VyOS 的 `/config` 文件一起清。
 
 ## 系统与实现
 
 | 系统 | 默认实现 | 额外依赖 | 验证 |
 |---|---|---|---|
 | Debian 13 | 内核模块 | `linux-headers-$(uname -r)` + `dkms` | ✅ 实测（13.7 / 内核 6.12） |
-| Debian 12 | 内核模块 | 同上 | 预计可用（内核 6.1，未实测） |
-| Ubuntu 22.04 / 24.04 | 内核模块 | 同上 | 预计可用（内核 5.15 / 6.8，未实测） |
-| Proxmox VE 8 / 9 | 内核模块 | `pve-headers-$(uname -r)` + `dkms` | 预计可用（未实测） |
+| Debian 12 | 内核模块 | 同上 | 待实测（内核 6.1） |
+| Ubuntu 22.04 / 24.04 | 内核模块 | 同上 | 待实测（内核 5.15 / 6.8） |
+| Proxmox VE 8 / 9 | 内核模块 | `pve-headers-$(uname -r)` + `dkms` | 待实测 |
 | VyOS 1.3.4 | 用户态 | `python3` + 可读 `/dev/mem` | ✅ 实测（1.3.4 / 内核 5.4.261） |
 | 其它 systemd 发行版 | 用户态 | 同上 | 未实测 |
 
-`install.sh` 按上表自动选择；任何系统也可以 `--userspace` 强制用户态。两者驱动同一套
-寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
+`install.sh` 按上表自动选择；任何系统也可以 `--userspace` 强制用户态。两种实现驱动
+同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
 
 | | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
 |---|---|---|
@@ -136,8 +139,8 @@ sudo ./install.sh
 | X553 速率档位 | 可写 | 写不了（本机不需要） |
 | 内核污点 | 有 | 无 |
 
-硬件只支持 **Dell VEP1400 / VMware SD-WAN Edge 610 非 X（Atom C3308）**；
-Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支持。
+> 硬件只支持 **Dell VEP1400 / VMware SD-WAN Edge 610 非 X（Atom C3308）**。
+> Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支持。
 
 ## 端口映射
 
@@ -155,15 +158,17 @@ Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支�
 | SFP1 | — | 无标签 | `SFP1` | 05:00.1（内核名） |
 | SFP2 | — | 无标签 | `SFP2` | 05:00.0（内核名） |
 
-上行口本身**永远不要配地址**：Debian / Ubuntu / PVE 上是 `eno1` / `eno2`
+上行口本身**永远不要配地址** —— Debian / Ubuntu / PVE 上是 `eno1` / `eno2`
 （03:00.0 / 03:00.1），VyOS 上是 `eth0` / `eth1`。`GE*` 的 MAC 取自对应上行口并加偏移
-（`+0x0a`…`+0x0f`），保证唯一。VyOS 上 SFP 口没有 vif，用的是内核名，**重启前后会变**
-（本机实测 `eth2`/`eth3` 和 `eno3`/`eno4` 都出现过），按上表的 PCI 地址认，
-`ip -br link` 或 `/sys/class/net/*/device` 一看便知。
+（`+0x0a`…`+0x0f`），保证唯一。
+
+VyOS 上 SFP 口没有 vif，用的是内核名，**重启前后会变**（本机实测 `eth2`/`eth3` 和
+`eno3`/`eno4` 都出现过），按上表的 PCI 地址认：`ip -br link` 或
+`/sys/class/net/*/device` 一看便知。
 
 ## 使用端口
 
-**Debian / Proxmox VE**（ifupdown）—— `GE*` 和普通网卡没有区别：
+**Debian / Proxmox VE** —— ifupdown，`GE*` 和普通网卡没有区别：
 
 ```sh
 # /etc/network/interfaces
@@ -171,7 +176,7 @@ auto GE1
 iface GE1 inet dhcp
 ```
 
-**Ubuntu Server**（netplan）：
+**Ubuntu Server** —— netplan：
 
 ```yaml
 # /etc/netplan/60-ge.yaml
@@ -182,10 +187,10 @@ network:
       dhcp4: true
 ```
 
-**VyOS**：不接受 `GE1` 这类接口名（会报 `Invalid Ethernet interface name`），要用
-两个上行口上的原生 vif —— `vif N` 就是前面板第 N 口：
+**VyOS** —— 不接受 `GE1` 这类接口名（会报 `Invalid Ethernet interface name`），改用
+两个上行口上的原生 vif，`vif N` 就是前面板第 N 口：
 
-```
+```text
 configure
 set interfaces ethernet eth0 vif 3 address dhcp     # 前面板 3
 set interfaces ethernet eth1 vif 6 address dhcp     # 前面板 6
@@ -193,7 +198,7 @@ commit
 save
 ```
 
-各系统都适用：
+三条通用规则：
 
 - **不要**给上行口本身配地址（见上一节）
 - **不要**把两个 `GE*`（VyOS 上是两个 vif）桥接 —— 它们在交换机里本就同广播域，桥接会成环
@@ -201,14 +206,14 @@ save
 
 ## 验证
 
-**Debian / Ubuntu / PVE**，两种实现装的都是这几个脚本：
+**Debian / Ubuntu / PVE** —— 两种实现装的都是这几个脚本：
 
 ```sh
 sudo /usr/lib/vep1400/vep1400-report.sh        # 一页总览
 sudo /usr/lib/vep1400/vep1400-linkdiag.sh 3    # 单口自协商解码
 ```
 
-**VyOS** 上只装工具本体（`/config` 才跨镜像保留），直接调它：
+**VyOS** —— 只装工具本体（`/config` 才跨镜像保留），直接调它：
 
 ```sh
 python3 /config/scripts/vep1400-userspace.py info      # 交换机端口表
@@ -218,7 +223,7 @@ python3 /config/scripts/vep1400-userspace.py watch 60  # 插拔线实时跟踪
 
 内核模块模式的正常启动日志（用户态实现看 `journalctl -t vep1400`）：
 
-```
+```text
 vep1400: Marvell 88E6190 rev 1
 vep1400: GE1 -> VLAN 1 via CPU port 10
 vep1400: CPU port 10 link up (1G)
@@ -279,7 +284,7 @@ vep1400: GE3 link up (1G)
 
 ## 目录结构
 
-```
+```text
 src/                 内核模块：switch / board(i2c) / mdio 头文件
 scripts/             netup、teardown、report、linkdiag、userspace 工具
 systemd/             vep1400.service、vep1400-net.service（+ 用户态变体）

@@ -6,13 +6,15 @@ Runs the **Dell VEP1400** (= **VMware SD-WAN Edge 610**, non-X, Intel Atom C3308
 with all six front panel RJ45 ports and both SFP cages on a **stock Debian /
 Ubuntu / Proxmox VE / VyOS** — no custom kernel, no device tree, no DSA.
 
-```
-   GE1..GE3 ─┐
-             ├─ 88E6190 port 10 ─ 802.1Q ─ X553 03:00.0 ─ eno1
-   GE4..GE6 ─┤
-             └─ 88E6190 port  9 ─ 802.1Q ─ X553 03:00.1 ─ eno2
+**Quick start** · [Systems](#systems-and-implementations) · [Port map](#port-map) · [Using the ports](#using-the-ports) · [Verify](#verify) · [Troubleshooting](#troubleshooting) · [Hardware](#hardware) · [Layout](#layout)
 
-   SFP1 = X553 05:00.1        SFP2 = X553 05:00.0
+```text
+   GE1..GE3 ─┐
+             ├─ port 10 ─ 802.1Q ─ X553 03:00.0 ─ eno1
+   GE4..GE6 ─┤   88E6190
+             └─ port  9 ─ 802.1Q ─ X553 03:00.1 ─ eno2
+
+   SFP1 ─ X553 05:00.1          SFP2 ─ X553 05:00.0
 ```
 
 The switch is a Marvell 88E6190, and the usual way to expose it is DSA, which
@@ -36,15 +38,17 @@ Tested on real hardware: all six ports negotiate 1000 Mb/s (Debian 13 and VyOS
 
 ## Quick start
 
-Get a **management and internet path** first — installing needs headers and
-packages, and loading the driver briefly disturbs the GE ports. This board has a
-single management plane and is passively cooled, so **Wi-Fi is the easiest
-choice**; never make a GE port your only management link during the install.
+### 1. Get a management path first
 
-**VyOS** (native wireless configuration. Do not skip `name-server` — VyOS ships
-without DNS, so `ping deb.debian.org` fails while `ping 1.1.1.1` works):
+Installing needs headers and packages, and loading the driver briefly disturbs
+the GE ports. This board has a single management plane and is passively cooled,
+so **Wi-Fi is the easiest choice**; never make a GE port your only management
+link during the install.
 
-```
+**VyOS** — do not skip `name-server`, VyOS ships without DNS, so
+`ping deb.debian.org` fails while `ping 1.1.1.1` works:
+
+```text
 configure
 set system name-server 1.1.1.1
 set interfaces wireless wlan0 type station
@@ -57,7 +61,7 @@ commit
 save
 ```
 
-**Debian / Proxmox VE** (ifupdown + wpasupplicant, PVE uses the same file):
+**Debian / Proxmox VE** — ifupdown + wpasupplicant, PVE uses the same file:
 
 ```sh
 apt install -y wpasupplicant
@@ -71,8 +75,8 @@ EOF
 ifup wlp2s0
 ```
 
-**Ubuntu Server** (netplan — write `/etc/netplan/50-wifi.yaml`, then
-`sudo netplan apply`):
+**Ubuntu Server** — netplan, write `/etc/netplan/50-wifi.yaml` then
+`sudo netplan apply`:
 
 ```yaml
 network:
@@ -85,19 +89,20 @@ network:
       dhcp4: true
 ```
 
-(Replace `wlp2s0` with your actual wireless interface name — `ip -br link` lists
-them.)
+> Replace `wlp2s0` with your actual wireless interface name — `ip -br link`
+> lists them.
 
-Confirm you are really online — these two commands work on Debian, PVE and VyOS
-alike, and you do not need to know the interface name:
+### 2. Check you are really online
+
+Two commands, identical on Debian / PVE / VyOS, and you do not need to know the
+interface name:
 
 ```sh
 ip route get 1.1.1.1        # which interface the default route leaves through
 ping -c1 deb.debian.org     # resolves and replies -> link, route and DNS are fine
 ```
 
-Then the one-liner (the implementation is chosen automatically; VyOS gets the
-userspace one):
+### 3. Install
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
@@ -105,8 +110,7 @@ wget -qO- https://neodev.team/get.sh | sudo bash                     # mirror, i
 ```
 
 To pass an option, append `-s -- <option>` after `bash` (see the table below).
-
-With git:
+Or clone it and use the script directly:
 
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
@@ -124,17 +128,17 @@ sudo ./install.sh
 | `--no-start` | install and enable, do not start now |
 | `--force` | replace the other implementation in place |
 
-Uninstall: `sudo ./uninstall.sh` (removes the module, the userspace files under
-`/usr`, and the VyOS files under `/config`)
+Uninstall: `sudo ./uninstall.sh` — removes the module, the userspace files under
+`/usr`, and the VyOS files under `/config`.
 
 ## Systems and implementations
 
 | System | Default | Also needs | Status |
 |---|---|---|---|
 | Debian 13 | kernel module | `linux-headers-$(uname -r)` + `dkms` | ✅ tested (13.7 / kernel 6.12) |
-| Debian 12 | kernel module | same | expected to work (kernel 6.1, untested) |
-| Ubuntu 22.04 / 24.04 | kernel module | same | expected to work (kernel 5.15 / 6.8, untested) |
-| Proxmox VE 8 / 9 | kernel module | `pve-headers-$(uname -r)` + `dkms` | expected to work (untested) |
+| Debian 12 | kernel module | same | not tested yet (kernel 6.1) |
+| Ubuntu 22.04 / 24.04 | kernel module | same | not tested yet (kernel 5.15 / 6.8) |
+| Proxmox VE 8 / 9 | kernel module | `pve-headers-$(uname -r)` + `dkms` | not tested yet |
 | VyOS 1.3.4 | userspace | `python3` + readable `/dev/mem` | ✅ tested (1.3.4 / kernel 5.4.261) |
 | other systemd distributions | userspace | same | untested |
 
@@ -150,9 +154,9 @@ them:
 | X553 speed strap | programmable | not programmable (not needed on this board) |
 | Kernel taint | yes | no |
 
-Hardware support is limited to the **Dell VEP1400 / VMware SD-WAN Edge 610
-non-X (Atom C3308)**. The Edge 610X / VEP1400-X uses a C3558 and a different
-switch configuration, which this version does not handle.
+> Hardware support is limited to the **Dell VEP1400 / VMware SD-WAN Edge 610
+> non-X (Atom C3308)**. The Edge 610X / VEP1400-X uses a C3558 and a different
+> switch configuration, which this version does not handle.
 
 ## Port map
 
@@ -199,19 +203,10 @@ network:
       dhcp4: true
 ```
 
-**VyOS**: it rejects interface names like `GE1` (`Invalid Ethernet interface
-name`), so use native vifs on the two uplinks — `vif N` is front panel port N:
+**VyOS** — it rejects interface names like `GE1` (`Invalid Ethernet interface
+name`), so use native vifs on the two uplinks; `vif N` is front panel port N:
 
-```sh
-# /etc/network/interfaces
-auto GE1
-iface GE1 inet dhcp
-```
-
-**VyOS**: it rejects interface names like `GE1` (`Invalid Ethernet interface
-name`), so use native vifs on the two uplinks — `vif N` is front panel port N:
-
-```
+```text
 configure
 set interfaces ethernet eth0 vif 3 address dhcp     # front panel 3
 set interfaces ethernet eth1 vif 6 address dhcp     # front panel 6
@@ -219,7 +214,7 @@ commit
 save
 ```
 
-True everywhere:
+Three rules that always apply:
 
 - **Never** put an address on the uplinks themselves (see the note above)
 - **Never** bridge two ports — they already share a broadcast domain, that loops
@@ -244,9 +239,10 @@ python3 /config/scripts/vep1400-userspace.py diag 3    # decode one port
 python3 /config/scripts/vep1400-userspace.py watch 60  # follow link changes
 ```
 
-A healthy boot in module mode looks like (userspace: `journalctl -t vep1400`):
+A healthy boot in module mode looks like this (userspace:
+`journalctl -t vep1400`):
 
-```
+```text
 vep1400: Marvell 88E6190 rev 1
 vep1400: GE1 -> VLAN 1 via CPU port 10
 vep1400: CPU port 10 link up (1G)
@@ -270,7 +266,7 @@ in most cases.
 | `unexpected switch id` | SMI out of sync. Module mode: check `dmesg \| grep P2SB`, pass `p2sb_bar_addr=`; userspace mode: confirm `INTC3000` is in `/proc/iomem` |
 | broken after a kernel upgrade | only module mode: `dkms status`, `journalctl -u dkms` |
 
-## The hardware
+## Hardware
 
 | | |
 |---|---|
@@ -312,7 +308,7 @@ on this unit, neither had anything to do with the driver.
 
 ## Layout
 
-```
+```text
 src/                 kernel module: switch / board (i2c) / mdio header
 scripts/             netup, teardown, report, linkdiag, userspace tool
 systemd/             vep1400.service, vep1400-net.service (+ userspace variant)
