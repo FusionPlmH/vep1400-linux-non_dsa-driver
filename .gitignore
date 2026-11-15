@@ -9,3 +9,5 @@
 modules.order
 Module.symvers
 *.tgz
+__pycache__/
+*.pyc
