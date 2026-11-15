@@ -1,0 +1,20 @@
+[Unit]
+Description=Dell VEP1400 / VMware Edge 610 LAN ports (GE1..GE6, SFP1/SFP2)
+Documentation=file:/usr/share/doc/vep1400/README.md
+DefaultDependencies=no
+Wants=vep1400.service
+After=vep1400.service systemd-udevd.service
+Before=network-pre.target networking.service shutdown.target
+Conflicts=shutdown.target
+ConditionPathExists=/sys/bus/pci/devices/0000:03:00.0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/vep1400/vep1400-netup.sh
+ExecStop=/usr/lib/vep1400/vep1400-teardown.sh
+TimeoutStartSec=90
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

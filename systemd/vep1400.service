@@ -1,0 +1,18 @@
+[Unit]
+Description=Dell VEP1400 / VMware Edge 610 board support (88E6190, watchdog, SFP TX)
+Documentation=file:/usr/share/doc/vep1400/README.md
+DefaultDependencies=no
+After=systemd-modules-load.service systemd-udevd.service
+Before=systemd-udev-trigger.service sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/modprobe vep1400
+ExecStop=-/sbin/modprobe -r vep1400
+TimeoutStartSec=60
+StandardOutput=journal+console
+
+[Install]
+WantedBy=sysinit.target

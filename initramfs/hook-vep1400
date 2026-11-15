@@ -1,0 +1,22 @@
+#!/bin/sh
+# initramfs-tools hook: include the VEP1400 board setup.
+# Installed as /etc/initramfs-tools/hooks/vep1400 by install.sh --initramfs.
+#
+# Only needed when the root filesystem takes a long time to mount (encrypted
+# root, fsck): the PIC watchdog reboots the board after 4-5 minutes unless the
+# module has disarmed it.
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+
+case "$1" in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+manual_add_modules i2c-ismt i2c-core i2c-dev vep1400
+copy_exec /usr/lib/vep1400/vep1400-initramfs /scripts/local-top/vep1400
