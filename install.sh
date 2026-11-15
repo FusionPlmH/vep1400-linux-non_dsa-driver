@@ -46,7 +46,7 @@ for arg in "$@"; do
 	--force) FORCE=1 ;;
 	--dry-run) DRY=1 ;;
 	-h | --help)
-		sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+		awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
 		exit 0
 		;;
 	*)
@@ -105,6 +105,11 @@ EOF
 fi
 
 echo "detected platform: $PLATFORM, implementation: $MODE"
+
+if [ "$DRY" -eq 1 ]; then
+	echo "ERROR: --dry-run is only implemented for VyOS" >&2
+	exit 1
+fi
 
 if [ "$MODE" = module ]; then
 	KVER=$(uname -r)
