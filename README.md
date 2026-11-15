@@ -38,16 +38,25 @@ uplinks and renames the SFP cages to `SFP1`/`SFP2`.
 
 ## Quick start
 
-### 1. One command, no git, no download
+### 1. One command — no git, no download
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+```
+
+If `curl` is not installed, `wget` does the same thing:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 ```
 
 Add `--initramfs` for the cleanest boot (see [install options](#install-options)):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
+  | sudo bash -s -- --initramfs
+
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo bash -s -- --initramfs
 ```
 
@@ -65,6 +74,9 @@ environment variables if you mirror the project somewhere else:
 # a mirror you host yourself, tarball or zip
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
+
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
+  | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 ```
 
 ### 2. With git
@@ -76,26 +88,6 @@ cd vep1400-linux-non_dsa-driver
 sudo ./install.sh
 sudo reboot
 ```
-
-### 3. Without git (tarball)
-
-```sh
-sudo apt install -y dkms linux-headers-$(uname -r)
-curl -fsSL https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver/archive/refs/heads/main.tar.gz \
-  | tar xz
-cd vep1400-linux-non_dsa-driver-main
-sudo ./install.sh
-sudo reboot
-```
-
-`wget` works the same way:
-
-```sh
-wget -qO- https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver/archive/refs/heads/main.tar.gz \
-  | tar xz
-```
-
-The tarball and the git tree are identical; nothing is generated at clone time.
 
 ## Requirements
 

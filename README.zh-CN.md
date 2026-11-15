@@ -43,10 +43,19 @@ SMI 总线，把 88E6190 配置成与 Dell DiagOS 相同的"每个前面板口�
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 ```
 
+系统里没有 `curl` 时，用 `wget` 效果完全一样：
+
+```sh
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
+```
+
 想要最干净的开机流程可以加上 `--initramfs`（见 [安装选项](#安装选项)）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
+  | sudo bash -s -- --initramfs
+
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo bash -s -- --initramfs
 ```
 
@@ -63,6 +72,9 @@ curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dr
 # 自建镜像，tar.gz 或 zip 都支持
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
   | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
+
+wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
+  | sudo VEP1400_TARBALL=https://neodev.team/vep1400-linux-non_dsa-driver.zip bash
 ```
 
 ### 2. 用 git
@@ -74,26 +86,6 @@ cd vep1400-linux-non_dsa-driver
 sudo ./install.sh
 sudo reboot
 ```
-
-### 3. 不用 git（下载 tarball）
-
-```sh
-sudo apt install -y dkms linux-headers-$(uname -r)
-curl -fsSL https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver/archive/refs/heads/main.tar.gz \
-  | tar xz
-cd vep1400-linux-non_dsa-driver-main
-sudo ./install.sh
-sudo reboot
-```
-
-`wget` 同理：
-
-```sh
-wget -qO- https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver/archive/refs/heads/main.tar.gz \
-  | tar xz
-```
-
-tarball 与 git 仓库内容完全一致，克隆时不需要生成任何文件。
 
 ## 环境要求
 
