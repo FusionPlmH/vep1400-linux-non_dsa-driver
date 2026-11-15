@@ -15,9 +15,16 @@
    SFP1 = X553 05:00.1        SFP2 = X553 05:00.0
 ```
 
-驱动通过被 Dell 固件隐藏的 P2SB 焊盘位操作 SMI 总线，把交换机配成 DiagOS 那套
-「一个前面板口一个 VLAN」；6 个 PHY 只上电初始化一次，之后完全交给自协商 ——
-插线即用，行为和普通网卡一样。同时关闭 PIC 看门狗、打开 SFP 发射。
+交换芯片是 Marvell 88E6190。常规做法是走 DSA，让内核把它拆成 `GE1`…`GE6` —— 但
+Debian、Ubuntu、PVE、VyOS 的发行版内核都是 `# CONFIG_NET_DSA is not set`（VyOS 连
+`CONFIG_NET_SWITCHDEV` 也关了），而它的 SMI 总线既没接到任何 MDIO 控制器，也没法用
+ACPI/DT 描述。为一块板让每个发行版重编内核不现实，所以这里走厂家 DiagOS 的老路：
+交换机内部配成**一个前面板口一个 802.1Q VLAN**，Linux 侧看到的就是 6 个普通网口。
+
+配置靠驱动通过被 Dell 固件隐藏的 P2SB 焊盘位 bit-bang SMI 完成；6 个 PHY 只在加载时
+上电初始化一次，之后完全交给自协商 —— 插线即用，行为和普通网卡一样。同时关闭 PIC
+看门狗、打开 SFP 发射。上行口协商为 `1000baseKX/Full`（交换芯片 ↔ X553 走
+1000BASE-X），本机 **2.5G 无法协商**。
 
 实测：六个口全部协商到 1000 Mb/s（Debian 13 与 VyOS 1.3.4 双系统验证）。
 
@@ -231,23 +238,6 @@ vep1400: GE3 link up (1G)
 | 串口 | `ttyS0`，115200 8N1 |
 | 散热 | 纯被动，**无风扇**，SMBus 上也没有风扇控制器 |
 | 看门狗 | PIC 在 SMBus `0x22`/`0x24`，不关则上电 4–5 分钟强制重启 |
-
-`dmidecode` 有几个坑：CPU 的 `Max Speed: 2100 MHz` 是 BIOS 填的族内上限（实际最高
-P-state 只有 1601 MHz，无睿频），`Upgrade: Socket LGA775` 是假的（CPU 焊死）；内存
-显示 4 个 DIMM 也只是固件对 SoC 内存通道的固定描述，实际是板载。
-
-<details>
-<summary><b>原理：为什么不用 DSA</b></summary>
-
-Debian、Ubuntu、PVE、VyOS 的内核都是 `# CONFIG_NET_DSA is not set`（VyOS 连
-`CONFIG_NET_SWITCHDEV` 也关了），而 88E6190 的 SMI 总线没有接到任何 MDIO 控制器，
-也无法用 ACPI/DT 描述。让每个发行版重编内核不现实，所以采用和厂家固件一样的做法：
-交换机配成一组 802.1Q access 口，Linux 侧看到的就是 6 个普通网口。
-
-上行口协商结果是 `1000baseKX/Full`，即交换芯片与 X553 之间走 1000BASE-X。
-本机 **2.5G 无法协商**（X553 KR PHY 与 88E6190 的 2500BASE-X PCS 都无法完成自协商）。
-
-</details>
 
 <details>
 <summary><b>PHY 初始化做了什么</b></summary>

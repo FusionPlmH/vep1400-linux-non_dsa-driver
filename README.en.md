@@ -15,11 +15,21 @@ Ubuntu / Proxmox VE / VyOS** — no custom kernel, no device tree, no DSA.
    SFP1 = X553 05:00.1        SFP2 = X553 05:00.0
 ```
 
-The driver bit-bangs the SMI bus over the Denverton P2SB pads that Dell's
-firmware hides, configures the switch the way DiagOS does (one VLAN per front
-panel port), powers the six PHYs up once and then leaves them entirely to
-autonegotiation — plug a cable and it behaves like any other NIC. It also
-disarms the PIC watchdog and enables SFP TX.
+The switch is a Marvell 88E6190, and the usual way to expose it is DSA, which
+would give the kernel `GE1`…`GE6` — but Debian, Ubuntu, PVE and VyOS all ship
+`# CONFIG_NET_DSA is not set` (VyOS disables `CONFIG_NET_SWITCHDEV` too), and the
+SMI bus is not wired to any MDIO controller, so it cannot be described in ACPI or
+device tree either. Rebuilding every target kernel for one board is not an
+option, so this takes the vendor's DiagOS route instead: the switch is configured
+as **one 802.1Q VLAN per front panel port** and Linux simply sees six ordinary
+Ethernet interfaces.
+
+The configuration is bit-banged over the Denverton P2SB pads that Dell's firmware
+hides. The six PHYs are powered up and set up once at load time and then left
+entirely to autonegotiation — plug a cable and it behaves like any other NIC. It
+also disarms the PIC watchdog and enables SFP TX. The uplinks negotiate
+`1000baseKX/Full` (switch ↔ X553 over 1000BASE-X); **2.5G never links** on this
+board.
 
 Tested on real hardware: all six ports negotiate 1000 Mb/s (Debian 13 and VyOS
 1.3.4).
@@ -245,27 +255,6 @@ in most cases.
 | Console | `ttyS0`, 115200 8N1 |
 | Cooling | passive, **no fan**, and no fan controller on the SMBus |
 | Watchdog | PIC on SMBus `0x22`/`0x24`, resets the board 4–5 minutes after power-on unless disarmed |
-
-`dmidecode` is misleading here: `Max Speed: 2100 MHz` is the family ceiling the
-BIOS fills in (the real maximum P-state is 1601 MHz, no turbo), `Upgrade: Socket
-LGA775` is bogus (the CPU is soldered), and the four DIMM entries are just how the
-firmware describes the SoC memory channels — the memory is onboard.
-
-<details>
-<summary><b>Why not DSA</b></summary>
-
-Debian, Ubuntu, PVE and VyOS all ship kernels with `# CONFIG_NET_DSA is not set`
-(VyOS disables `CONFIG_NET_SWITCHDEV` too), and the 88E6190 SMI bus is not wired
-to any MDIO controller, so it cannot be described in ACPI or device tree either.
-Rebuilding every target kernel is not an option, so the driver does what the
-vendor firmware does: the switch becomes a set of 802.1Q access ports and Linux
-sees six ordinary Ethernet interfaces.
-
-The uplinks negotiate `1000baseKX/Full`, i.e. the switch and the X553s talk
-1000BASE-X across the board. **2.5G never links** on this board (neither the X553
-KR PHY nor the 88E6190 2500BASE-X PCS completes autonegotiation).
-
-</details>
 
 <details>
 <summary><b>What the PHY init does</b></summary>
