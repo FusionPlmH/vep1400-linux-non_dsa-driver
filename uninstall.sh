@@ -2,11 +2,7 @@
 # Remove the Dell VEP1400 / VMware SD-WAN Edge 610 board support.
 #
 # Removes either implementation (kernel module or userspace) - they share the
-# same unit names, so there is nothing to choose here.
-#
-# On VyOS the files live in /config, use a different mechanism; the hook there
-# is /config/scripts/vyos-postconfig-bootup.script and removing it plus
-# /config/scripts/vep1400-userspace.py is enough.
+# same unit names - and the VyOS-specific files in /config.
 
 set -u
 
@@ -60,5 +56,16 @@ fi
 
 depmod -a "$KVER" 2>/dev/null || true
 systemctl daemon-reload
+
+# VyOS keeps the tool and its boot hook in /config, which outlives /usr.
+if [ -f /config/scripts/vep1400-userspace.py ]; then
+	rm -f /config/scripts/vep1400-userspace.py
+	echo "removed /config/scripts/vep1400-userspace.py"
+fi
+if [ -f /config/scripts/vyos-postconfig-bootup.script ] &&
+	grep -q 'vep1400-userspace.py' /config/scripts/vyos-postconfig-bootup.script; then
+	rm -f /config/scripts/vyos-postconfig-bootup.script
+	echo "removed /config/scripts/vyos-postconfig-bootup.script"
+fi
 
 echo "removed. ixgbe is untouched; reboot to return to the stock setup."

@@ -23,21 +23,67 @@
 
 ## 快速开始
 
-先准备好**管理和外网**再动手（装驱动需要下头和包，而加载驱动会短暂打断 GE* 口）：
+先在**能上网的通道**上把管理和外网准备好再动手 —— 装驱动要下内核头和包，而加载驱动
+会短暂打断 GE* 口。这块板只有一个管理面、纯被动散热，**无线是最省事的选择**；不要
+把某个 GE 口当作安装期间唯一的管理口。
 
-```sh
-# Debian / Ubuntu / PVE：用板载无线当管理和外网
-nmcli device wifi connect "<SSID>" password "<PSK>"     # 或者 iwctl、/etc/network/interfaces
-ip route && ping -c1 deb.debian.org                     # 确认真的通了
+**VyOS**（原生无线配置）：
+
+```
+configure
+set interfaces wireless wlan0 type station
+set interfaces wireless wlan0 physical-device phy0
+set interfaces wireless wlan0 ssid "<SSID>"
+set interfaces wireless wlan0 security wpa mode wpa2
+set interfaces wireless wlan0 security wpa passphrase "<PSK>"
+set interfaces wireless wlan0 address dhcp
+commit
+save
 ```
 
-然后一行命令装（默认**内核模块**）：
+**Debian / Proxmox VE**（ifupdown + wpasupplicant，PVE 也是用这个文件）：
+
+```sh
+apt install -y wpasupplicant
+cat >> /etc/network/interfaces <<'EOF'
+
+auto wlp2s0
+iface wlp2s0 inet dhcp
+	wpa-ssid <SSID>
+	wpa-psk  <PSK>
+EOF
+ifup wlp2s0
+```
+
+**Ubuntu Server**（netplan，写 `/etc/netplan/50-wifi.yaml` 后 `sudo netplan apply`）：
+
+```yaml
+network:
+  version: 2
+  wifis:
+    wlp2s0:
+      access-points:
+        "<SSID>":
+          password: "<PSK>"
+      dhcp4: true
+```
+
+网卡名先用 `ip -br link` 确认 —— 这台是 `wlp2s0`，很多其它卡是 `wlan0`。最后自检：
+
+```sh
+ip -4 addr show <ifname>   # 有地址
+ip route                   # 默认路由走这个口
+ping -c1 deb.debian.org    # 通了再往下走
+```
+
+然后一行命令装。**实现按系统自动选择**：Debian / Ubuntu / PVE 用内核模块，VyOS
+自动走用户态（它没有编译器，也没有内核头文件）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 ```
 
-用户态实现（没有编译器 / 没有内核头文件也能装）：
+强制改用用户态实现（比如头文件装不上，或者不想污染内核）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
@@ -56,27 +102,28 @@ curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-dr
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh              # 内核模块（推荐）
-sudo ./install.sh --userspace  # 或用户态实现
+sudo ./install.sh              # 按系统自动选实现
+sudo ./install.sh --userspace  # 或强制用户态
 ```
 
 | 选项 | 作用 |
 |---|---|
-| *（无）* | 内核模块 + DKMS，跟着内核升级自动重编 |
-| `--userspace` | 用户态实现：不编译、不污染内核 |
+| *（无）* | 按系统自动选择：Debian/Ubuntu/PVE → 内核模块 + DKMS，VyOS → 用户态 |
+| `--userspace` | 强制用户态实现：不编译、不污染内核 |
+| `--module` | 强制内核模块（VyOS 上会被拒绝） |
 | `--initramfs` | 模块同时进 initramfs（加密根分区、fsck 慢的场景） |
 | `--no-dkms` | 只针对当前内核编译 |
 | `--no-start` | 装好并 enable，但本次不启动 |
 | `--force` | 就地替换已装的另一种实现 |
 
-卸载：`sudo ./uninstall.sh`
+卸载：`sudo ./uninstall.sh`（模块、`/usr` 下的用户态文件、VyOS 的 `/config` 文件一起清）
 
 ## 两种实现怎么选
 
 | | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
 |---|---|---|
-| Debian / Ubuntu / PVE | **推荐**（默认） | 可选 |
-| VyOS 等无编译器系统 | 编不出来 | **唯一选择** |
+| Debian / Ubuntu / PVE | **自动选中**（推荐） | `--userspace` 可强制 |
+| VyOS 等无编译器系统 | 编不出来 | **自动选中，唯一选择** |
 | 内核升级 | DKMS 自动重编 | 不用管 |
 | 依赖 | 内核头文件 + 编译器 | `python3` + 可读 `/dev/mem` |
 | X553 速率档位 | 可写 | 写不了（本机不需要） |
@@ -111,9 +158,6 @@ sudo ./install.sh --userspace  # 或用户态实现
 # /etc/network/interfaces
 auto GE1
 iface GE1 inet dhcp
-
-# 或 NetworkManager
-nmcli con add type ethernet ifname GE1 ipv4.method auto
 ```
 
 - **不要**给 `eno1`/`eno2` 配地址 —— 它们是带标签的内部上行口
@@ -152,14 +196,10 @@ vep1400: GE3 link up (1G)
 
 ## VyOS
 
-VyOS 没有编译器也没有内核头文件，**只能**用用户态实现，且要用专门脚本（它把工具
-放进 `/config/scripts/` 并挂 VyOS 原生开机钩子，`/config` 会跨镜像升级保留）：
+`install.sh` 会自动选用户态实现，不需要额外参数。**唯一不同的是端口配置方式**：
 
-```sh
-sudo ./vyos/setup.sh
-```
-
-前面板口用原生 vif 配，`vif N` 就是前面板第 N 口：
+VyOS 不接受 `GE1` 这类接口名（会报 `Invalid Ethernet interface name`），要用两个
+上行口上的原生 vif —— `vif N` 就是前面板第 N 口：
 
 ```
 configure
@@ -169,11 +209,11 @@ commit
 save
 ```
 
-工具本身随时可用：
+诊断工具在 `/config/scripts/`（不是 `/usr/lib/vep1400/`，因为 `/config` 才能跨镜像
+升级保留）：
 
 ```sh
 python3 /config/scripts/vep1400-userspace.py info      # 交换机端口表
-python3 /config/scripts/vep1400-userspace.py phy       # PHY 寄存器
 python3 /config/scripts/vep1400-userspace.py diag 3    # 单口自协商解码
 python3 /config/scripts/vep1400-userspace.py watch 60  # 插拔线实时跟踪
 ```

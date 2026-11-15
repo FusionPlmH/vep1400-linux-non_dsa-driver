@@ -1,21 +1,23 @@
 #!/bin/bash
 # Dell VEP1400 / VMware SD-WAN Edge 610 board support.
 #
-# Two implementations, pick one and stay with it:
+# The implementation is chosen automatically:
 #
-#   sudo ./install.sh               kernel module (recommended on Debian,
-#                                   Ubuntu and Proxmox VE: DKMS survives
-#                                   kernel upgrades, runs before igb/ixgbe)
-#   sudo ./install.sh --userspace   userspace bring-up (no compiler, no kernel
-#                                   headers, no kernel taint)
+#   Debian / Ubuntu / Proxmox VE  ->  kernel module (default)
+#   VyOS                          ->  userspace (it has no compiler and no
+#                                     kernel headers, and /config is the only
+#                                     place that survives an image upgrade)
 #
-# Options:
+#   sudo ./install.sh               pick the default for this system
+#   sudo ./install.sh --userspace   force the userspace implementation
+#   sudo ./install.sh --module      force the kernel module (refused on VyOS)
+#
+# Other options:
 #   --no-start     install and enable, do not start now (reboot to use)
 #   --no-dkms      module mode: build for the running kernel only
 #   --initramfs    module mode: also load the module from the initramfs
 #   --force        replace a previously installed version of the other mode
-#
-# VyOS: use ./vyos/setup.sh instead (userspace only, it has no compiler).
+#   --dry-run      VyOS: only print what would be done
 
 set -euo pipefail
 
@@ -28,20 +30,23 @@ UNIT_DIR="/etc/systemd/system"
 TOOL="$LIB_DIR/vep1400-userspace.py"
 
 MODE="module"
+MODE_EXPLICIT=0
 START=1
 USE_DKMS=1
 USE_INITRAMFS=0
 FORCE=0
+DRY=0
 for arg in "$@"; do
 	case "$arg" in
-	--userspace) MODE="userspace" ;;
-	--module) MODE="module" ;;
+	--userspace) MODE="userspace"; MODE_EXPLICIT=1 ;;
+	--module) MODE="module"; MODE_EXPLICIT=1 ;;
 	--no-start) START=0 ;;
 	--no-dkms) USE_DKMS=0 ;;
 	--initramfs) USE_INITRAMFS=1 ;;
 	--force) FORCE=1 ;;
+	--dry-run) DRY=1 ;;
 	-h | --help)
-		sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+		sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
 		exit 0
 		;;
 	*)
@@ -56,18 +61,50 @@ done
 	exit 1
 }
 
-if [ -d /opt/vyatta ]; then
-	if [ "$MODE" = module ]; then
-		echo "this looks like VyOS: it has no compiler and no kernel headers," >&2
-		echo "so the module cannot be built there. Use ./vyos/setup.sh instead." >&2
+detect_platform() {
+	if [ -d /opt/vyatta ] || grep -qs '^ID=vyos' /etc/os-release; then
+		echo vyos
+	elif [ -e /etc/pve ]; then
+		echo proxmox
+	elif grep -qs '^ID=ubuntu' /etc/os-release; then
+		echo ubuntu
+	elif grep -qsE '^ID=debian|^ID_LIKE=.*debian' /etc/os-release; then
+		echo debian
+	else
+		echo unknown
+	fi
+}
+
+PLATFORM=$(detect_platform)
+
+if [ "$PLATFORM" = vyos ]; then
+	if [ "$MODE_EXPLICIT" = 1 ] && [ "$MODE" = module ]; then
+		cat >&2 <<'EOF'
+ERROR: VyOS cannot use the kernel module: the image ships no compiler and no
+       kernel headers, and it has no DKMS to rebuild after kernel upgrades.
+       Drop --module (VyOS always gets the userspace implementation).
+EOF
 		exit 1
 	fi
-	cat >&2 <<'EOF'
-WARNING: this looks like VyOS.
-         --userspace works here, but /usr does not survive an image upgrade.
-         Prefer ./vyos/setup.sh, which keeps the tool in /config instead.
-EOF
+
+	echo "detected VyOS: userspace implementation only"
+	for opt in --no-start --no-dkms --initramfs; do
+		case " $* " in
+		*" $opt "*) echo "   note: $opt does not apply on VyOS" >&2 ;;
+		esac
+	done
+	if [ -f "$UNIT_DIR/vep1400.service" ] &&
+		! grep -q 'userspace' "$UNIT_DIR/vep1400.service" 2>/dev/null; then
+		echo "   note: a generic vep1400.service is installed; ./uninstall.sh" >&2
+		echo "         removes it if you want a clean VyOS-only setup" >&2
+	fi
+
+	VYOS_ARGS=()
+	[ "$DRY" -eq 1 ] && VYOS_ARGS+=(--dry-run)
+	exec bash "$HERE/vyos/setup.sh" "${VYOS_ARGS[@]}"
 fi
+
+echo "detected platform: $PLATFORM, implementation: $MODE"
 
 if [ "$MODE" = module ]; then
 	KVER=$(uname -r)
@@ -120,8 +157,7 @@ fi
 # files both modes need
 
 echo "== installing common files"
-install -d "$LIB_DIR" "$DOC_DIR" "$UNIT_DIR"
-install -m 0755 "$HERE/scripts/vep1400-netup.sh" "$LIB_DIR/"
+install -d "$LIB_DIR" "$DOC_DIR" "$UNIT_DIR"install -m 0755 "$HERE/scripts/vep1400-netup.sh" "$LIB_DIR/"
 install -m 0755 "$HERE/scripts/vep1400-teardown.sh" "$LIB_DIR/"
 install -m 0755 "$HERE/scripts/vep1400-report.sh" "$LIB_DIR/"
 install -m 0755 "$HERE/scripts/vep1400-linkdiag.sh" "$LIB_DIR/"

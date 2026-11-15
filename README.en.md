@@ -27,21 +27,71 @@ payload per port.
 ## Quick start
 
 Get a **management and internet path** first — installing needs headers and
-packages, and loading the driver briefly disturbs the GE ports:
+packages, and loading the driver briefly disturbs the GE ports. This board has a
+single management plane and is passively cooled, so **Wi-Fi is the easiest
+choice**; never make a GE port your only management link during the install.
 
-```sh
-# Debian / Ubuntu / PVE: use the onboard Wi-Fi for both
-nmcli device wifi connect "<SSID>" password "<PSK>"     # or iwctl, /etc/network/interfaces
-ip route && ping -c1 deb.debian.org                     # make sure it really works
+**VyOS** (native wireless configuration):
+
+```
+configure
+set interfaces wireless wlan0 type station
+set interfaces wireless wlan0 physical-device phy0
+set interfaces wireless wlan0 ssid "<SSID>"
+set interfaces wireless wlan0 security wpa mode wpa2
+set interfaces wireless wlan0 security wpa passphrase "<PSK>"
+set interfaces wireless wlan0 address dhcp
+commit
+save
 ```
 
-Then one command (installs the **kernel module** by default):
+**Debian / Proxmox VE** (ifupdown + wpasupplicant, PVE uses the same file):
+
+```sh
+apt install -y wpasupplicant
+cat >> /etc/network/interfaces <<'EOF'
+
+auto wlp2s0
+iface wlp2s0 inet dhcp
+	wpa-ssid <SSID>
+	wpa-psk  <PSK>
+EOF
+ifup wlp2s0
+```
+
+**Ubuntu Server** (netplan — write `/etc/netplan/50-wifi.yaml`, then
+`sudo netplan apply`):
+
+```yaml
+network:
+  version: 2
+  wifis:
+    wlp2s0:
+      access-points:
+        "<SSID>":
+          password: "<PSK>"
+      dhcp4: true
+```
+
+Check the interface name with `ip -br link` first — it is `wlp2s0` here, `wlan0`
+on many other cards. Then confirm you are really online:
+
+```sh
+ip -4 addr show <ifname>   # an address
+ip route                   # a default route through it
+ping -c1 deb.debian.org    # replies
+```
+
+Now the one-liner. The implementation is **chosen automatically**: Debian /
+Ubuntu / PVE get the kernel module, VyOS gets the userspace one (it has no
+compiler and no kernel headers):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 ```
 
-Userspace implementation (works without a compiler or kernel headers):
+Forcing the userspace implementation (no headers available, or you do not want a
+tainted kernel):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh \
@@ -60,27 +110,29 @@ With git:
 ```sh
 git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
 cd vep1400-linux-non_dsa-driver
-sudo ./install.sh              # kernel module (recommended)
-sudo ./install.sh --userspace  # or the userspace implementation
+sudo ./install.sh              # auto-selects the implementation
+sudo ./install.sh --userspace  # or force userspace
 ```
 
 | Option | Effect |
 |---|---|
-| *(none)* | kernel module + DKMS, rebuilt automatically on kernel upgrades |
-| `--userspace` | userspace implementation: nothing compiled, no kernel taint |
+| *(none)* | auto-select: Debian/Ubuntu/PVE → kernel module + DKMS, VyOS → userspace |
+| `--userspace` | force the userspace implementation: nothing compiled, no kernel taint |
+| `--module` | force the kernel module (refused on VyOS) |
 | `--initramfs` | also load the module from the initramfs (encrypted root, slow fsck) |
 | `--no-dkms` | build for the running kernel only |
 | `--no-start` | install and enable, do not start now |
 | `--force` | replace the other implementation in place |
 
-Uninstall: `sudo ./uninstall.sh`
+Uninstall: `sudo ./uninstall.sh` (removes the module, the userspace files under
+`/usr`, and the VyOS files under `/config`)
 
 ## Which implementation?
 
 | | kernel module `vep1400.ko` | userspace `vep1400-userspace.py` |
 |---|---|---|
-| Debian / Ubuntu / PVE | **recommended** (default) | optional |
-| VyOS and other compiler-less systems | cannot be built | **the only option** |
+| Debian / Ubuntu / PVE | **selected automatically** (recommended) | force with `--userspace` |
+| VyOS and other compiler-less systems | cannot be built | **selected automatically, the only option** |
 | Kernel upgrades | DKMS rebuilds it | nothing to do |
 | Needs | kernel headers + compiler | `python3` + readable `/dev/mem` |
 | X553 speed strap | programmable | not programmable (not needed on this board) |
@@ -116,9 +168,6 @@ After boot `GE1`…`GE6` are ordinary interfaces:
 # /etc/network/interfaces
 auto GE1
 iface GE1 inet dhcp
-
-# or NetworkManager
-nmcli con add type ethernet ifname GE1 ipv4.method auto
 ```
 
 - **Never** put an address on `eno1`/`eno2` — they are the tagged internal uplinks
@@ -157,16 +206,11 @@ vep1400: GE3 link up (1G)
 
 ## VyOS
 
-VyOS has neither a compiler nor kernel headers, so it can only use the
-userspace implementation — and via the dedicated script, which puts the tool in
-`/config/scripts/` and installs the native VyOS boot hook (`/config` survives
-image upgrades):
+`install.sh` selects the userspace implementation automatically, nothing extra to
+pass. **The only difference is how the ports are configured:**
 
-```sh
-sudo ./vyos/setup.sh
-```
-
-Configure front panel ports as native vifs; `vif N` is front panel port N:
+VyOS rejects interface names like `GE1` (`Invalid Ethernet interface name`), so
+use native vifs on the two uplinks — `vif N` is front panel port N:
 
 ```
 configure
@@ -176,11 +220,11 @@ commit
 save
 ```
 
-The tool is always available for diagnostics:
+The diagnostics live in `/config/scripts/` (not `/usr/lib/vep1400/`, because only
+`/config` survives an image upgrade):
 
 ```sh
 python3 /config/scripts/vep1400-userspace.py info      # switch port table
-python3 /config/scripts/vep1400-userspace.py phy       # PHY registers
 python3 /config/scripts/vep1400-userspace.py diag 3    # decode one port
 python3 /config/scripts/vep1400-userspace.py watch 60  # follow link changes
 ```
