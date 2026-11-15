@@ -157,7 +157,8 @@ fi
 # files both modes need
 
 echo "== installing common files"
-install -d "$LIB_DIR" "$DOC_DIR" "$UNIT_DIR"install -m 0755 "$HERE/scripts/vep1400-netup.sh" "$LIB_DIR/"
+install -d "$LIB_DIR" "$DOC_DIR" "$UNIT_DIR"
+install -m 0755 "$HERE/scripts/vep1400-netup.sh" "$LIB_DIR/"
 install -m 0755 "$HERE/scripts/vep1400-teardown.sh" "$LIB_DIR/"
 install -m 0755 "$HERE/scripts/vep1400-report.sh" "$LIB_DIR/"
 install -m 0755 "$HERE/scripts/vep1400-linkdiag.sh" "$LIB_DIR/"
