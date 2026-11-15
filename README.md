@@ -265,8 +265,7 @@ modprobe/            softdep 与默认参数
 initramfs/           可选的提前加载钩子
 vyos/                VyOS 安装脚本 + 开机钩子
 install.sh           一个入口：默认模块，--userspace 走用户态
-get.sh               免 git 的一行命令安装
-get-mirror.sh        自建镜像用：归档也只从镜像站取，不碰 GitHub
+get.sh               免 git 的一行命令安装（GitHub 与镜像共用同一个脚本）
 ```
 
 ## 许可

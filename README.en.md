@@ -287,8 +287,7 @@ modprobe/            softdep and default parameters
 initramfs/           optional early-load hook
 vyos/                VyOS installer + boot hook
 install.sh           one entry point: module by default, --userspace for the tool
-get.sh               the no-git one-liner
-get-mirror.sh        for a self-hosted mirror: never contacts GitHub
+get.sh               the no-git one-liner (same file on GitHub and on the mirror)
 ```
 
 ## License
