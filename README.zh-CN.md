@@ -149,8 +149,8 @@ sudo reboot
 | | |
 |---|---|
 | 硬件 | Dell VEP1400 / VMware SD-WAN Edge 610（非 X） |
-| 系统 | Debian 12/13、Ubuntu 22.04/24.04、Proxmox VE 8/9、VyOS 1.4+ |
-| 内核 | 5.15 – 6.x，需安装头文件 `linux-headers-$(uname -r)` |
+| 系统 | Debian 12/13、Ubuntu 22.04/24.04、Proxmox VE 8/9（内核模块）；VyOS（用户态，见 [VyOS](#vyos)） |
+| 内核 | Debian/Ubuntu/PVE：5.15 – 6.x，需安装头文件 `linux-headers-$(uname -r)` |
 | 管理网 | 一条独立且能上网的通道 —— 无线、USB 网卡或串口（见 [上文](#安装前先打通管理网)） |
 | 工具 | `dkms`（可选但推荐）、`curl` 或 `wget`、`i2c-tools`（仅诊断用） |
 
@@ -230,6 +230,79 @@ sudo ./install.sh --initramfs  # 同时把模块放进 initramfs
 ```sh
 sudo ./uninstall.sh
 ```
+
+## VyOS
+
+VyOS 是个特例：镜像里**既没有编译器也没有内核头文件**
+（`/lib/modules/$(uname -r)/build` 里只有几个 UAPI 头），`vep1400.ko` 在机器上
+根本编不出来 —— 而且 VyOS 也没有 DKMS，内核升级后无法自动重编。所以同一套寄存器
+序列还提供了一份**用户态工具**，两个都不需要：它直接通过 `/dev/mem`（P2SB 焊盘上
+位操作的 SMI 总线）和 `/dev/i2c-0`（看门狗、SFP TX）操作交换机。
+
+已在 **VyOS 1.3.4（equuleus）、内核 5.4.261-amd64-vyos** 上实测，该内核
+`CONFIG_NET_DSA` 和 `CONFIG_NET_SWITCHDEV` 都是关闭的 —— 和 Debian 一样，下面的
+VLAN 拆分是唯一可行路线。
+
+```sh
+git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
+cd vep1400-linux-non_dsa-driver
+sudo ./vyos/setup.sh
+```
+
+`vyos/setup.sh` 做四件事：
+
+1. 把 `vep1400-userspace.py` 复制到 `/config/scripts/`，VyOS 升级镜像时
+   `/config` 会保留（其它目录不会）；
+2. 安装 `/config/scripts/vyos-postconfig-bootup.script` —— VyOS 官方的开机钩子，
+   每次启动在配置加载完成后执行；
+3. 加载 `i2c_ismt` 和 `i2c-dev`；
+4. 立即把交换机配置好。
+
+开机钩子是重启后仍然生效的关键，验证方式是「先把交换机恢复到出厂状态再重启」：
+
+```
+$ python3 vep1400-userspace.py reset      # 回到出厂，eth0 立刻掉链路
+$ systemctl reboot
+$ journalctl -t vep1400 -b
+vyos vep1400[2275]: switch and front panel PHYs configured
+
+$ ethtool eth0 | grep 'Link detected'
+Link detected: yes
+```
+
+前面板端口用两个上行口上的 VLAN 子接口配置。VyOS 里它们叫 `eth0`/`eth1`，
+`vif N` 与前面板第 N 口一一对应：
+
+```
+configure
+set interfaces ethernet eth0 vif 1 address 192.168.10.1/24    # 前面板 1
+set interfaces ethernet eth0 vif 2 address 192.168.20.1/24    # 前面板 2
+set interfaces ethernet eth0 vif 3 address dhcp               # 前面板 3
+set interfaces ethernet eth1 vif 4 address 192.168.40.1/24    # 前面板 4
+set interfaces ethernet eth1 vif 5 address 192.168.50.1/24    # 前面板 5
+set interfaces ethernet eth1 vif 6 address dhcp               # 前面板 6
+commit
+save
+```
+
+结果是 `eth0.1` … `eth1.6`，每个前面板口一个。**不要**给 `eth0`/`eth1` 本身
+配地址。
+
+日常命令：
+
+```sh
+python3 /config/scripts/vep1400-userspace.py info    # 交换机端口表
+python3 /config/scripts/vep1400-userspace.py phy     # PHY 寄存器 + 链路
+python3 /config/scripts/vep1400-userspace.py init    # 重新执行初始化
+python3 /config/scripts/vep1400-userspace.py reset   # 回到出厂状态
+```
+
+如果更习惯 `GE1`…`GE6` 这种名字，工具也能创建（`vep1400-userspace.py vlan`），
+不过在 VyOS 上上面那种 `vif` 写法才是原生做法。
+
+> 这份用户态工具在 Debian/Ubuntu/PVE 上也同样可以用来**诊断**（模块加载时
+> `info`、`phy` 都能用）。但不要在那里执行 `init` —— 交换机归内核模块管。
+> 一台机器只用一种方式。
 
 ## 使用这些端口
 
@@ -421,6 +494,10 @@ src/vep1400_switch.c   88E6190 初始化、X553 档位、PHY、LED、链路监�
 src/vep1400_board.c    I²C：PIC 看门狗、SFP TX_DISABLE
 src/vep1400_mdio.h     P2SB 焊盘、位操作 SMI、VTU/SERDES/PHY 辅助函数
 scripts/               netup、teardown、report、linkdiag
+scripts/vep1400-userspace.py
+                       不需要内核模块的同一套初始化（VyOS 用）
+vyos/setup.sh          安装用户态工具 + VyOS 开机钩子
+vyos/vyos-postconfig-bootup.script
 systemd/               vep1400.service、vep1400-net.service
 modprobe/vep1400.conf  softdep 与默认参数
 initramfs/             可选的提前加载钩子

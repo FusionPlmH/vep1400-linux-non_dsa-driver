@@ -1,0 +1,26 @@
+#!/bin/sh
+# Dell VEP1400 / VMware Edge 610 - VyOS boot hook.
+#
+# Installed as /config/scripts/vyos-postconfig-bootup.script by vyos/setup.sh.
+# VyOS runs this after the configuration has been applied on every boot, which
+# is exactly what we need: the switch and the front panel PHYs have to be
+# programmed before the VLAN interfaces can pass traffic, and the PIC watchdog
+# has to be disarmed long before it would reset the board (4-5 minutes).
+#
+# Everything here is idempotent and best effort.
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+modprobe i2c_ismt 2>/dev/null
+modprobe i2c-dev 2>/dev/null
+
+if [ -x /config/scripts/vep1400-userspace.py ]; then
+	if python3 /config/scripts/vep1400-userspace.py init >/dev/null 2>&1; then
+		logger -t vep1400 "switch and front panel PHYs configured"
+	else
+		logger -t vep1400 "ERROR: bring-up failed, see 'python3 /config/scripts/vep1400-userspace.py init'"
+	fi
+fi
+
+exit 0

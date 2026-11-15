@@ -158,8 +158,8 @@ sudo reboot
 | | |
 |---|---|
 | Hardware | Dell VEP1400 / VMware SD-WAN Edge 610 (non-X) |
-| OS | Debian 12/13, Ubuntu 22.04/24.04, Proxmox VE 8/9, VyOS 1.4+ |
-| Kernel | 5.15 – 6.x, headers installed (`linux-headers-$(uname -r)`) |
+| OS | Debian 12/13, Ubuntu 22.04/24.04, Proxmox VE 8/9 (kernel module); VyOS (userspace, see [VyOS](#vyos)) |
+| Kernel | Debian/Ubuntu/PVE: 5.15 – 6.x, headers installed (`linux-headers-$(uname -r)`) |
 | Management | an independent path with internet access — Wi-Fi, a USB NIC or the serial console (see [above](#before-you-install-bring-up-your-management-path-first)) |
 | Tools | `dkms` (recommended, optional), `curl` or `wget`, `i2c-tools` (diagnostics only) |
 
@@ -245,6 +245,82 @@ To remove everything:
 ```sh
 sudo ./uninstall.sh
 ```
+
+## VyOS
+
+VyOS is a special case: the image ships **no compiler and no kernel headers**
+(`/lib/modules/$(uname -r)/build` only holds a handful of UAPI headers), so
+`vep1400.ko` cannot be built there — and VyOS has no DKMS to rebuild it on
+kernel updates anyway. The same register sequences are therefore also available
+as a **userspace tool** that needs neither: it drives the switch directly
+through `/dev/mem` (the bit-banged SMI bus on the P2SB pads) and `/dev/i2c-0`
+(watchdog and SFP TX).
+
+Verified on **VyOS 1.3.4 (equuleus), kernel 5.4.261-amd64-vyos**, where
+`CONFIG_NET_DSA` and `CONFIG_NET_SWITCHDEV` are both disabled — the VLAN split
+below is the only option, exactly as on Debian.
+
+```sh
+git clone https://github.com/FusionPlmH/vep1400-linux-non_dsa-driver.git
+cd vep1400-linux-non_dsa-driver
+sudo ./vyos/setup.sh
+```
+
+`vyos/setup.sh` does four things:
+
+1. copies `vep1400-userspace.py` to `/config/scripts/`, which VyOS keeps across
+   image upgrades (the rest of the filesystem does not),
+2. installs `/config/scripts/vyos-postconfig-bootup.script`, the documented
+   VyOS hook that runs on every boot after the configuration is applied,
+3. loads `i2c_ismt` and `i2c-dev`,
+4. programs the switch right away.
+
+The boot hook is what makes it survive reboots. It was validated the hard way:
+reset the switch to its power-on defaults (uplinks down, `eth0: Link detected:
+no`), reboot, and the hook brings everything back:
+
+```
+$ journalctl -t vep1400 -b
+vyos vep1400[2275]: switch and front panel PHYs configured
+
+$ ethtool eth0 | grep 'Link detected'
+Link detected: yes
+```
+
+Configure the front panel ports as VLAN interfaces on the two uplinks. VyOS
+names them `eth0`/`eth1`, and `vif N` maps 1:1 onto front panel port N:
+
+```
+configure
+set interfaces ethernet eth0 vif 1 address 192.168.10.1/24    # front panel 1
+set interfaces ethernet eth0 vif 2 address 192.168.20.1/24    # front panel 2
+set interfaces ethernet eth0 vif 3 address dhcp               # front panel 3
+set interfaces ethernet eth1 vif 4 address 192.168.40.1/24    # front panel 4
+set interfaces ethernet eth1 vif 5 address 192.168.50.1/24    # front panel 5
+set interfaces ethernet eth1 vif 6 address dhcp               # front panel 6
+commit
+save
+```
+
+The result is `eth0.1` … `eth1.6`, one per front panel port. Never put an address
+on `eth0`/`eth1` themselves.
+
+Day-to-day commands:
+
+```sh
+python3 /config/scripts/vep1400-userspace.py info    # switch port table
+python3 /config/scripts/vep1400-userspace.py phy     # PHY registers + link
+python3 /config/scripts/vep1400-userspace.py init    # re-run the bring-up
+python3 /config/scripts/vep1400-userspace.py reset   # back to power-on defaults
+```
+
+If you have a spare cable and want `GE1`…`GE6` names instead of `eth0.N`, the
+tool can create them too (`... vep1400-userspace.py vlan`), but on VyOS the
+`vif` form above is the idiomatic one.
+
+> The userspace tool is also handy for **diagnosing** a Debian/Ubuntu/PVE
+> install (`info` and `phy` work while the module is loaded). Do not run `init`
+> there — the module owns the switch. Pick one mechanism per machine.
 
 ## Using the ports
 
@@ -450,6 +526,10 @@ src/vep1400_switch.c   88E6190 bring-up, X553 strap, PHYs, LEDs, link monitor, d
 src/vep1400_board.c    I²C: PIC watchdog, SFP TX_DISABLE
 src/vep1400_mdio.h     P2SB pads, bit-banged SMI, VTU/SERDES/PHY helpers
 scripts/               netup, teardown, report, linkdiag
+scripts/vep1400-userspace.py
+                       the same bring-up without a kernel module (VyOS)
+vyos/setup.sh          installs the userspace tool + the VyOS boot hook
+vyos/vyos-postconfig-bootup.script
 systemd/               vep1400.service, vep1400-net.service
 modprobe/vep1400.conf  softdep + default parameters
 initramfs/             optional early-load hook
