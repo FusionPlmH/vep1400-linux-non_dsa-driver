@@ -90,10 +90,9 @@ userspace one):
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 wget -qO-  https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash -s -- --userspace
 ```
 
-curl, the wget equivalent, and the userspace override.
+curl first, the wget equivalent second — same thing, pick one.
 
 With git:
 

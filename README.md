@@ -82,10 +82,9 @@ ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 ```sh
 curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
 wget -qO-  https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
-curl -fsSL https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash -s -- --userspace
 ```
 
-三行分别是 curl 版、wget 版（等价，挑一个）和强制用户态。
+第一行用 curl、第二行用 wget，内容相同，挑一个。
 
 用 git：
 
