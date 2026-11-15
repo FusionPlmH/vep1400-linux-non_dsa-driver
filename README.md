@@ -36,6 +36,67 @@ uplinks and renames the SFP cages to `SFP1`/`SFP2`.
 
 ---
 
+## Before you install: bring up your management path first
+
+Installing this driver is a chicken-and-egg problem. `vep1400.ko` resets the
+switch and re-initialises all six front panel PHYs, and `vep1400-net.service`
+reloads `ixgbe` once when it has to. Any address on a `GE*` port disappears
+during that window — and you need internet access to install `dkms` and
+`linux-headers-$(uname -r)` *before* the driver can even be built.
+
+**Recommended: use the Wi-Fi card as your management and internet path, then
+install the driver.** Wi-Fi is completely independent of the 88E6190 and the
+X553, so the box stays reachable — and keeps its internet access — through the
+whole install and every reboot afterwards. The reference unit has a QCA986x
+(`ath10k_pci`) card. If your unit has no Wi-Fi, a USB Ethernet adapter or a
+second machine on the serial console works just as well.
+
+What does **not** work is making one of `GE1`…`GE6` your only management link
+before the driver exists.
+
+Pick the recipe that matches your install:
+
+**NetworkManager** (desktop images, Proxmox VE):
+
+```sh
+nmcli device wifi connect "<SSID>" password "<PSK>"
+nmcli connection modify "<SSID>" connection.autoconnect yes
+```
+
+**iwd**:
+
+```sh
+iwctl --passphrase "<PSK>" station wlan0 connect "<SSID>"
+```
+
+**Minimal Debian (ifupdown + wpasupplicant)** — this is what the reference unit
+runs:
+
+```sh
+apt install -y wpasupplicant
+cat >> /etc/network/interfaces <<'EOF'
+
+allow-hotplug wlp2s0
+iface wlp2s0 inet dhcp
+	wpa-ssid <SSID>
+	wpa-psk  <PSK>
+EOF
+ifup wlp2s0
+```
+
+Check the interface name first with `ip -br link` — it is `wlp2s0` here, but
+`wlan0` on many other cards. Then confirm you are really online before you
+continue:
+
+```sh
+ip -4 addr show wlp2s0     # an address
+ip route                   # a default route via wlp2s0
+ping -c1 deb.debian.org    # replies
+```
+
+Now go ahead and install. Keep the serial console attached for the first reboot,
+and do not configure `GE1`…`GE6` until `vep1400-net.service` has created them.
+
 ## Quick start
 
 ### 1. One command — no git, no download
@@ -96,9 +157,10 @@ sudo reboot
 | Hardware | Dell VEP1400 / VMware SD-WAN Edge 610 (non-X) |
 | OS | Debian 12/13, Ubuntu 22.04/24.04, Proxmox VE 8/9, VyOS 1.4+ |
 | Kernel | 5.15 – 6.x, headers installed (`linux-headers-$(uname -r)`) |
+| Management | an independent path with internet access — Wi-Fi, a USB NIC or the serial console (see [above](#before-you-install-bring-up-your-management-path-first)) |
 | Tools | `dkms` (recommended, optional), `curl` or `wget`, `i2c-tools` (diagnostics only) |
 
-Boards with the Intel Atom C3558 ("Edge 610**X**" / VEP1400-X) use a different
+Boards with the Intel Atom C3XX8 **(Edge 6X0 / VEP1400-X)** use a different
 switch configuration and are **not** supported by this version.
 
 ## The hardware
@@ -115,6 +177,7 @@ Everything below was read from a real unit with `dmidecode`, `lspci` and
 | Storage | 16 GB eMMC (`mmcblk0`) plus an SD slot and one SATA port |
 | Switch | Marvell 88E6190 rev 1 — 6 front panel PHYs + 2 SerDes ports used as CPU uplinks |
 | NICs | 4× Intel X553 Backplane `8086:15c3`: `03:00.0/.1` feed the switch, `05:00.0/.1` are the SFP cages |
+| Wi-Fi | QCA986x `ath10k_pci` at `02:00.0` on the reference unit — ideal as the management path |
 | Front panel | 6× 10/100/1000BASE-T RJ45, 2× SFP |
 | Console | `ttyS0`, 115200 8N1 |
 | Cooling | **passive — there is no fan and no fan controller on the SMBus** |

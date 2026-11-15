@@ -35,6 +35,61 @@ SMI 总线，把 88E6190 配置成与 Dell DiagOS 相同的"每个前面板口�
 
 ---
 
+## 安装前：先打通管理网
+
+装这个驱动有个先有鸡还是先有蛋的问题：`vep1400.ko` 会复位交换芯片并重新初始化
+六个前面板 PHY，必要时 `vep1400-net.service` 还会重载一次 `ixgbe`。这个过程里
+配在 `GE*` 上的地址会消失 —— 而在驱动编译出来之前，你又必须能上网装 `dkms` 和
+`linux-headers-$(uname -r)`。
+
+**建议：先用无线网卡做管理和上网通道，再来装驱动。** 无线与 88E6190、X553 完全
+无关，整个安装过程以及之后的每次重启，机器都不会失联，也一直有外网。参考机装的
+是 QCA986x（`ath10k_pci`）。如果你的机器没有无线，USB 网卡或串口+另一台机器也
+同样可行。
+
+**不要**在驱动还不存在的时候，把 `GE1`…`GE6` 中的某一个当成唯一的管理口。
+
+按你的系统选一种做法：
+
+**NetworkManager**（桌面镜像、Proxmox VE）：
+
+```sh
+nmcli device wifi connect "<SSID>" password "<PSK>"
+nmcli connection modify "<SSID>" connection.autoconnect yes
+```
+
+**iwd**：
+
+```sh
+iwctl --passphrase "<PSK>" station wlan0 connect "<SSID>"
+```
+
+**最小化 Debian（ifupdown + wpasupplicant）** —— 参考机就是这种：
+
+```sh
+apt install -y wpasupplicant
+cat >> /etc/network/interfaces <<'EOF'
+
+allow-hotplug wlp2s0
+iface wlp2s0 inet dhcp
+	wpa-ssid <SSID>
+	wpa-psk  <PSK>
+EOF
+ifup wlp2s0
+```
+
+先用 `ip -br link` 确认网卡名 —— 这台是 `wlp2s0`，很多其它卡是 `wlan0`。然后确认
+真的通了再往下走：
+
+```sh
+ip -4 addr show wlp2s0     # 有地址
+ip route                   # 有经由 wlp2s0 的默认路由
+ping -c1 deb.debian.org    # 能通
+```
+
+接下来就可以安装了。第一次重启时建议保留串口线，并且在 `vep1400-net.service`
+把 `GE1`…`GE6` 创建出来之前不要去配置它们。
+
 ## 快速开始
 
 ### 1. 一行命令（不用 git，也不用下载）
@@ -94,9 +149,10 @@ sudo reboot
 | 硬件 | Dell VEP1400 / VMware SD-WAN Edge 610（非 X） |
 | 系统 | Debian 12/13、Ubuntu 22.04/24.04、Proxmox VE 8/9、VyOS 1.4+ |
 | 内核 | 5.15 – 6.x，需安装头文件 `linux-headers-$(uname -r)` |
+| 管理网 | 一条独立且能上网的通道 —— 无线、USB 网卡或串口（见 [上文](#安装前先打通管理网)） |
 | 工具 | `dkms`（可选但推荐）、`curl` 或 `wget`、`i2c-tools`（仅诊断用） |
 
-Atom C3558 的 **Edge 610X / VEP1400-X** 交换机配置不同，本版本**不支持**。
+Atom C3XX8 的 **Edge 6X0 / VEP1400-X** 交换机配置不同，本版本**不支持**。
 
 ## 硬件信息
 
@@ -111,6 +167,7 @@ Atom C3558 的 **Edge 610X / VEP1400-X** 交换机配置不同，本版本**不�
 | 存储 | 16 GB eMMC（`mmcblk0`），另有 SD 卡槽和 1 个 SATA 口 |
 | 交换芯片 | Marvell 88E6190 rev 1 —— 6 个前面板 PHY + 2 个用作 CPU 上行的 SerDes 口 |
 | 网卡 | 4 个 Intel X553 Backplane `8086:15c3`：`03:00.0/.1` 接交换芯片，`05:00.0/.1` 是 SFP 笼 |
+| 无线 | 参考机 `02:00.0` 上有 QCA986x（`ath10k_pci`）—— 很适合当管理通道 |
 | 前面板 | 6× 10/100/1000BASE-T RJ45，2× SFP |
 | 串口 | `ttyS0`，115200 8N1 |
 | 散热 | **纯被动散热 —— 无风扇，SMBus 上也没有风扇控制器** |
