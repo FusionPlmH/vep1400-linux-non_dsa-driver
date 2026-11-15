@@ -163,8 +163,9 @@ switch configuration, which this version does not handle.
 | `SFP1` / `SFP2` | — | untagged | 05:00.1 / 05:00.0 |
 
 `GE*` inherit their uplink's MAC plus a per-port offset (`+0x0a`…`+0x0f`). The
-SFP cages are the other two X553s: `eno3`/`eno4` on Debian / PVE, `eth2`/`eth3`
-on VyOS.
+SFP cages are the other two X553s (`05:00.0` / `05:00.1`); their kernel names are
+whatever udev picks — `eno3`/`eno4` on both Debian 13 and VyOS 1.3.4 here, just
+check `ip -br link`.
 
 ## Using the ports
 
