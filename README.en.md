@@ -73,13 +73,15 @@ network:
       dhcp4: true
 ```
 
-Check the interface name with `ip -br link` first — it is `wlp2s0` here, `wlan0`
-on many other cards. Then confirm you are really online:
+(Replace `wlp2s0` with your actual wireless interface name — `ip -br link` lists
+them.)
+
+Confirm you are really online — these two commands work on Debian, PVE and VyOS
+alike, and you do not need to know the interface name:
 
 ```sh
-ip -4 addr show <ifname>   # an address
-ip route                   # a default route through it
-ping -c1 deb.debian.org    # replies
+ip route get 1.1.1.1        # which interface the default route leaves through
+ping -c1 deb.debian.org     # resolves and replies -> link, route and DNS are fine
 ```
 
 Now the one-liner. The implementation is **chosen automatically**: Debian /

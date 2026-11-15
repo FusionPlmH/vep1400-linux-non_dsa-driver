@@ -68,12 +68,13 @@ network:
       dhcp4: true
 ```
 
-网卡名先用 `ip -br link` 确认 —— 这台是 `wlp2s0`，很多其它卡是 `wlan0`。最后自检：
+（配置里的 `wlp2s0` 换成实际的无线网卡名，`ip -br link` 可查。）
+
+装之前确认真的能上网 —— 下面两条命令 Debian / PVE / VyOS 都通用，也不用记网卡名：
 
 ```sh
-ip -4 addr show <ifname>   # 有地址
-ip route                   # 默认路由走这个口
-ping -c1 deb.debian.org    # 通了再往下走
+ip route get 1.1.1.1        # 默认路由经哪个口出去
+ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 ```
 
 然后一行命令装。**实现按系统自动选择**：Debian / Ubuntu / PVE 用内核模块，VyOS
