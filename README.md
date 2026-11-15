@@ -233,9 +233,10 @@ Atom C3XX8 的 **Edge 6X0 / VEP1400-X** 交换机配置不同，本版本**不�
 |---|---|
 | 系统 | Dell EMC `EDGE610`，DMI Family `VEP1400`，SKU `08VT73`，BIOS `3.43.0.9-8` |
 | 主板 | `EDGE610-CPU` |
-| CPU | Intel Atom C3308（Denverton，14nm），2 核 2 线程，1.6 GHz 基频 / 2.1 GHz 睿频，4 MB L2，`01:00.0` 为 QAT 加速器 |
-| 内存 | 4 GB DDR4-2400 ECC UDIMM（实际跑 1866 MT/s），4 个插槽，最大 128 GB |
-| 存储 | 16 GB eMMC（`mmcblk0`），另有 SD 卡槽和 1 个 SATA 口 |
+| CPU | Intel Atom **C3308**（Denverton，14 nm），2 核 2 线程，1.6 GHz，4 MB L2，`01:00.0` 为 QAT 加速器 |
+| 内存 | **4 GB DDR4-2400 ECC，板载焊死，不可扩展**（实际训练在 1866 MT/s） |
+| 存储 | 16 GB eMMC（`mmcblk0`，板载），另有 SD 卡槽和 **1 个 mSATA 插槽**（SATA 控制器 `00:13.0` / `8086:19b2`） |
+| LTE | **1 个 LTE 模块插槽**（含 SIM 卡槽）。模块是**选装**的：参考机那颗 Quectel 是机主自己加的，走 USB + `cdc_mbim` 驱动，生成 `wwan0` |
 | 交换芯片 | Marvell 88E6190 rev 1 —— 6 个前面板 PHY + 2 个用作 CPU 上行的 SerDes 口 |
 | 网卡 | 4 个 Intel X553 Backplane `8086:15c3`：`03:00.0/.1` 接交换芯片，`05:00.0/.1` 是 SFP 笼 |
 | 无线 | 参考机 `02:00.0` 上有 QCA986x（`ath10k_pci`）—— 很适合当管理通道 |
@@ -246,6 +247,18 @@ Atom C3XX8 的 **Edge 6X0 / VEP1400-X** 交换机配置不同，本版本**不�
 
 上行口协商结果为 `1000baseKX/Full`，即交换芯片与 X553 之间走 1000BASE-X。
 本机 **2.5G 无法协商**（见 [原理：关于 1G 协商](#原理关于-1g-协商)）。
+
+关于 CPU 型号：本机是 **C3308**，证据是 CPUID 品牌串（`/proc/cpuinfo` 的
+`model name`）和 DMI Type 4 的 `Version` 都是
+`Intel(R) Atom(TM) CPU C3308 @ 1.60GHz`，Signature 为
+`Family 6, Model 95, Stepping 1`（Model 95 = Denverton），2 核 2 线程。
+如果看到 C3338 之类的说法，那不是这台：C3338 是 1.5 GHz 基频、2.2 GHz 睿频，
+而本机 ACPI 只暴露 1601 MHz 的最高 P-state。
+
+`dmidecode` 里有两个容易误读的字段：`Max Speed: 2100 MHz` 是 AMI BIOS 填的
+族内上限，**不代表本 SKU 有睿频**（`lscpu` 的 `CPU max MHz` = 1601、
+`BogoMIPS` = 3200 ≈ 2 × 1600 MHz）；`Upgrade: Socket LGA775` 也是 BIOS 的
+通用占位——这颗 CPU 是焊死在板上的，和内存、eMMC 一样。
 
 ## 端口映射与 MAC
 

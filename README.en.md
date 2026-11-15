@@ -251,9 +251,10 @@ Everything below was read from a real unit with `dmidecode`, `lspci` and
 |---|---|
 | System | Dell EMC `EDGE610`, DMI family `VEP1400`, SKU `08VT73`, BIOS `3.43.0.9-8` |
 | Board | `EDGE610-CPU` |
-| CPU | Intel Atom C3308 (Denverton, 14 nm), 2 cores / 2 threads, 1.6 GHz base, 2.1 GHz burst, 4 MB L2, QAT at `01:00.0` |
-| Memory | 4 GB DDR4-2400 ECC UDIMM (trained at 1866 MT/s), 4 slots, 128 GB max |
-| Storage | 16 GB eMMC (`mmcblk0`) plus an SD slot and one SATA port |
+| CPU | Intel Atom **C3308** (Denverton, 14 nm), 2 cores / 2 threads, 1.6 GHz, 4 MB L2, QAT at `01:00.0` |
+| Memory | **4 GB DDR4-2400 ECC, soldered on board, not upgradeable** (trained at 1866 MT/s) |
+| Storage | 16 GB eMMC (`mmcblk0`, onboard), plus an SD slot and **one mSATA slot** (SATA controller `00:13.0` / `8086:19b2`) |
+| LTE | **one LTE module slot** (with SIM slot). The module itself is **optional** — the Quectel in the reference unit was fitted by its owner; it attaches over USB with `cdc_mbim` and shows up as `wwan0` |
 | Switch | Marvell 88E6190 rev 1 — 6 front panel PHYs + 2 SerDes ports used as CPU uplinks |
 | NICs | 4× Intel X553 Backplane `8086:15c3`: `03:00.0/.1` feed the switch, `05:00.0/.1` are the SFP cages |
 | Wi-Fi | QCA986x `ath10k_pci` at `02:00.0` on the reference unit — ideal as the management path |
