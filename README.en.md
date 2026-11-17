@@ -40,7 +40,8 @@ Tested on real hardware: all six ports negotiate 1000 Mb/s (Debian 13 and VyOS
 
 ### 1. Get a management path first
 
-Installing needs headers and packages, and loading the driver briefly disturbs
+Installing needs kernel headers and build packages (`install.sh` apt-installs
+what is missing), and loading the driver briefly disturbs
 the GE ports. This board has a single management plane and is passively cooled,
 so **Wi-Fi is the easiest choice**; never make a GE port your only management
 link during the install.
@@ -123,6 +124,7 @@ sudo ./install.sh
 | *(none)* | auto-select: Debian/Ubuntu/PVE → kernel module + DKMS, VyOS → userspace |
 | `--userspace` | force the userspace implementation: nothing compiled, no kernel taint |
 | `--module` | force the kernel module (refused on VyOS) |
+| `--no-deps` | do not apt install the build dependencies: kernel headers, `make`/`gcc`, `dkms` (offline use) |
 | `--initramfs` | also load the module from the initramfs (encrypted root, slow fsck) |
 | `--no-dkms` | build for the running kernel only |
 | `--no-start` | install and enable, do not start now |
@@ -138,11 +140,14 @@ Uninstall: `sudo ./uninstall.sh` — removes the module, the userspace files und
 | Debian 13 | kernel module | `linux-headers-$(uname -r)` + `dkms` | ✅ tested (13.7 / kernel 6.12) |
 | Debian 12 | kernel module | same | not tested yet (kernel 6.1) |
 | Ubuntu 22.04 / 24.04 | kernel module | same | not tested yet (kernel 5.15 / 6.8) |
-| Proxmox VE 8 / 9 | kernel module | `pve-headers-$(uname -r)` + `dkms` | not tested yet |
+| Proxmox VE 8 / 9 | kernel module | `proxmox-headers-$(uname -r)` (`pve-headers-` on 8.0/8.1) + `dkms` | not tested yet |
 | VyOS 1.3.4 | userspace | `python3` + readable `/dev/mem` | ✅ tested (1.3.4 / kernel 5.4.261) |
 | other systemd distributions | userspace | same | untested |
 
-`install.sh` follows the table above; any system can still force the userspace
+`install.sh` follows the table above and, in module mode, installs whatever is
+missing with `apt-get` first (`linux-headers-$(uname -r)` /
+`proxmox-headers-$(uname -r)`, `make`, `gcc`, `dkms`); `--no-deps` turns that
+off. Any system can still force the userspace
 implementation with `--userspace`. Both drive the same register sequences and
 reach the same speed, but use **one per machine** — `install.sh` refuses to mix
 them:

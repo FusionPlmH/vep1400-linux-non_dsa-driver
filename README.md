@@ -34,7 +34,8 @@ ACPI/DT 描述。为一块板让每个发行版重编内核不现实，所以这
 
 ### ① 先把管理通道弄好
 
-装驱动要下内核头和包，而加载驱动会短暂打断 `GE*` 口。这块板只有一个管理面、纯被动
+装驱动要下内核头和编译包（`install.sh` 会用 `apt-get` 自动补齐），而加载驱动会短暂打断
+`GE*` 口。这块板只有一个管理面、纯被动
 散热，**无线是最省事的选择**；不要把某个 GE 口当作安装期间唯一的管理口。
 
 **VyOS** —— `name-server` 这句别漏，VyOS 默认不配 DNS，缺了它 `ping deb.debian.org`
@@ -111,6 +112,7 @@ sudo ./install.sh
 | *（无）* | 按系统自动选择：Debian/Ubuntu/PVE → 内核模块 + DKMS，VyOS → 用户态 |
 | `--userspace` | 强制用户态实现：不编译、不污染内核 |
 | `--module` | 强制内核模块（VyOS 上会被拒绝） |
+| `--no-deps` | 不自动补装编译依赖：内核头文件、`make`/`gcc`、`dkms`（离线环境用） |
 | `--initramfs` | 模块同时进 initramfs（加密根分区、fsck 慢的场景） |
 | `--no-dkms` | 只针对当前内核编译 |
 | `--no-start` | 装好并 enable，但本次不启动 |
@@ -125,11 +127,13 @@ sudo ./install.sh
 | Debian 13 | 内核模块 | `linux-headers-$(uname -r)` + `dkms` | ✅ 实测（13.7 / 内核 6.12） |
 | Debian 12 | 内核模块 | 同上 | 待实测（内核 6.1） |
 | Ubuntu 22.04 / 24.04 | 内核模块 | 同上 | 待实测（内核 5.15 / 6.8） |
-| Proxmox VE 8 / 9 | 内核模块 | `pve-headers-$(uname -r)` + `dkms` | 待实测 |
+| Proxmox VE 8 / 9 | 内核模块 | `proxmox-headers-$(uname -r)`（8.0/8.1 为 `pve-headers-`）+ `dkms` | 待实测 |
 | VyOS 1.3.4 | 用户态 | `python3` + 可读 `/dev/mem` | ✅ 实测（1.3.4 / 内核 5.4.261） |
 | 其它 systemd 发行版 | 用户态 | 同上 | 未实测 |
 
-`install.sh` 按上表自动选择；任何系统也可以 `--userspace` 强制用户态。两种实现驱动
+`install.sh` 按上表自动选择；模块模式下缺什么就先用 `apt-get` 补什么
+（`linux-headers-$(uname -r)` / `proxmox-headers-$(uname -r)`、`make`、`gcc`、`dkms`），
+`--no-deps` 可关闭。任何系统也可以 `--userspace` 强制用户态。两种实现驱动
 同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
 
 | | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |

@@ -15,6 +15,7 @@
 # Other options:
 #   --no-start     install and enable, do not start now (reboot to use)
 #   --no-dkms      module mode: build for the running kernel only
+#   --no-deps      module mode: do not apt install missing build dependencies
 #   --initramfs    module mode: also load the module from the initramfs
 #   --force        replace a previously installed version of the other mode
 #   --dry-run      VyOS: only print what would be done
@@ -34,6 +35,7 @@ MODE_EXPLICIT=0
 START=1
 USE_DKMS=1
 USE_INITRAMFS=0
+AUTO_DEPS=1
 FORCE=0
 DRY=0
 for arg in "$@"; do
@@ -42,6 +44,7 @@ for arg in "$@"; do
 	--module) MODE="module"; MODE_EXPLICIT=1 ;;
 	--no-start) START=0 ;;
 	--no-dkms) USE_DKMS=0 ;;
+	--no-deps) AUTO_DEPS=0 ;;
 	--initramfs) USE_INITRAMFS=1 ;;
 	--force) FORCE=1 ;;
 	--dry-run) DRY=1 ;;
@@ -77,6 +80,47 @@ detect_platform() {
 
 PLATFORM=$(detect_platform)
 
+headers_package() {
+	case "$PLATFORM" in
+	proxmox) echo "proxmox-headers-$KVER" ;;
+	*) echo "linux-headers-$KVER" ;;
+	esac
+}
+
+apt_install() {
+	DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+}
+
+# A fresh Debian/Ubuntu/PVE install usually lacks all three: the headers for
+# the running kernel, make/gcc, and dkms. Installing the headers alone still
+# leaves "make: command not found", so they are pulled in together.
+ensure_module_deps() {
+	local want=() pkg
+
+	[ -d "/lib/modules/$KVER/build" ] || want+=("$(headers_package)")
+	command -v make >/dev/null 2>&1 || want+=(make)
+	command -v gcc >/dev/null 2>&1 || want+=(gcc)
+	if [ "$USE_DKMS" -eq 1 ] && ! command -v dkms >/dev/null 2>&1; then
+		want+=(dkms)
+	fi
+	[ "${#want[@]}" -eq 0 ] && return 0
+
+	if ! command -v apt-get >/dev/null 2>&1; then
+		echo "== missing build dependencies: ${want[*]} (no apt-get here)" >&2
+		return 1
+	fi
+
+	echo "== installing build dependencies: ${want[*]}"
+	apt-get update || true
+	for pkg in "${want[@]}"; do
+		apt_install "$pkg" || true
+	done
+	# PVE 8.0/8.1 shipped the headers as pve-headers-*, 8.2+ renamed them.
+	if [ ! -d "/lib/modules/$KVER/build" ] && [ "$PLATFORM" = proxmox ]; then
+		apt_install "pve-headers-$KVER" || true
+	fi
+}
+
 if [ "$PLATFORM" = vyos ]; then
 	if [ "$MODE_EXPLICIT" = 1 ] && [ "$MODE" = module ]; then
 		cat >&2 <<'EOF'
@@ -88,7 +132,7 @@ EOF
 	fi
 
 	echo "detected VyOS: userspace implementation only"
-	for opt in --no-start --no-dkms --initramfs; do
+	for opt in --no-start --no-dkms --no-deps --initramfs; do
 		case " $* " in
 		*" $opt "*) echo "   note: $opt does not apply on VyOS" >&2 ;;
 		esac
@@ -113,12 +157,22 @@ fi
 
 if [ "$MODE" = module ]; then
 	KVER=$(uname -r)
+	if [ "$AUTO_DEPS" -eq 1 ]; then
+		ensure_module_deps || true
+	fi
 	[ -d "/lib/modules/$KVER/build" ] || {
 		echo "ERROR: /lib/modules/$KVER/build is missing." >&2
-		echo "       apt install linux-headers-$KVER   (pve-headers on PVE)" >&2
+		echo "       apt install $(headers_package)" >&2
 		echo "       or install the userspace variant:  $0 --userspace" >&2
 		exit 1
 	}
+	for tool in make gcc; do
+		command -v "$tool" >/dev/null 2>&1 || {
+			echo "ERROR: $tool is missing: apt install build-essential" >&2
+			echo "       or install the userspace variant:  $0 --userspace" >&2
+			exit 1
+		}
+	done
 else
 	command -v python3 >/dev/null 2>&1 || {
 		echo "ERROR: --userspace needs python3" >&2
