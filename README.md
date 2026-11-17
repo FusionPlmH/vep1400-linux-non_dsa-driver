@@ -143,6 +143,8 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="
 sudo update-grub && sudo reboot
 ```
 
+（`iomem=relaxed` 会放宽内核对 `/dev/mem` 的严格检查，只在你确实要用用户态时加。）
+
 `--userspace` 会在改动现有安装**之前**预检，映射不通就退出；不加 `iomem=relaxed`
 的 Debian/PVE 用默认的模块模式即可。两种实现驱动
 同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：

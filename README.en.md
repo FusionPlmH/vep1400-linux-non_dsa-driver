@@ -158,6 +158,9 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="
 sudo update-grub && sudo reboot
 ```
 
+(`iomem=relaxed` relaxes the kernel's strict `/dev/mem` checks; only add it
+when you actually want the userspace implementation.)
+
 `--userspace` probes this **before** touching an existing install and exits
 when the mapping is refused. Both drive the same register sequences and
 reach the same speed, but use **one per machine** — `install.sh` refuses to mix
