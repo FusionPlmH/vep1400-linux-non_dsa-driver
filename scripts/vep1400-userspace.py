@@ -165,9 +165,10 @@ class Smi(object):
                                    offset=self.bar + P2SB_NORTH_OFF)
         except PermissionError:
             os.close(self.fd)
-            raise Error("/dev/mem cannot map the P2SB window at 0x%x: the "
-                        "kernel blocks it with CONFIG_IO_STRICT_DEVMEM, use "
-                        "the kernel module instead"
+            raise Error("/dev/mem cannot map the P2SB window at 0x%x: "
+                        "CONFIG_IO_STRICT_DEVMEM blocks the ACPI-exclusive "
+                        "range; boot with iomem=relaxed or use the kernel "
+                        "module instead"
                         % (self.bar + P2SB_NORTH_OFF))
         self.padbar = struct.unpack_from("<I", self.north, 0x0C)[0]
         if self.padbar >= P2SB_NORTH_LEN:

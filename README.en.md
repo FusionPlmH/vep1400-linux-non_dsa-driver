@@ -150,9 +150,16 @@ missing with `apt-get` first (`linux-headers-$(uname -r)` /
 off. Any system can still force the userspace implementation with
 `--userspace`, but it has to map the hidden P2SB window through `/dev/mem`,
 which kernels built with `CONFIG_IO_STRICT_DEVMEM` refuse once ACPI marks the
-`INTC3000` range exclusive (the Debian 13 / PVE kernel does). `--userspace`
-probes this **before** touching an existing install and exits.
-Both drive the same register sequences and
+`INTC3000` range exclusive (the Debian 13 / PVE kernel does). Boot with
+`iomem=relaxed` to allow it, e.g. on Debian / PVE:
+
+```sh
+sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 iomem=relaxed"/' /etc/default/grub
+sudo update-grub && sudo reboot
+```
+
+`--userspace` probes this **before** touching an existing install and exits
+when the mapping is refused. Both drive the same register sequences and
 reach the same speed, but use **one per machine** — `install.sh` refuses to mix
 them:
 
@@ -274,7 +281,7 @@ in most cases.
 | a port only reaches 100M | `vep1400-linkdiag.sh <n>`: does the peer advertise 1000BASE-T? usually cable or peer port |
 | `unexpected switch id` | SMI out of sync. Module mode: check `dmesg \| grep P2SB`, pass `p2sb_bar_addr=`; userspace mode: confirm `INTC3000` is in `/proc/iomem` |
 | broken after a kernel upgrade | only module mode: `dkms status`, `journalctl -u dkms` |
-| `--userspace` refused with P2SB / mmap EPERM | the kernel's `CONFIG_IO_STRICT_DEVMEM` will not let `/dev/mem` map the ACPI-exclusive P2SB window; use the default module mode (or build a kernel without that option) |
+| `--userspace` refused with P2SB / mmap EPERM | the kernel's `CONFIG_IO_STRICT_DEVMEM` will not let `/dev/mem` map the ACPI-exclusive P2SB window; boot with `iomem=relaxed`, or use the default module mode |
 
 ## Hardware
 

@@ -233,7 +233,11 @@ else
 	elif ! probe_msg=$(userspace_mmap_probe 2>&1); then
 		cat >&2 <<EOF
 ERROR: --userspace cannot work on this kernel: $probe_msg
-       Nothing was changed; use the kernel module on this system:
+       CONFIG_IO_STRICT_DEVMEM forbids mapping the firmware-hidden P2SB
+       window. Boot with iomem=relaxed to allow it, e.g. on Debian / PVE:
+           GRUB_CMDLINE_LINUX_DEFAULT="quiet iomem=relaxed"  # /etc/default/grub
+           update-grub && reboot
+       or use the kernel module on this system:
            $0 --module --force
        (VEP1400_SKIP_DEVMEM_PROBE=1 overrides this preflight.)
 EOF

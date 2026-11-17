@@ -135,8 +135,16 @@ sudo ./install.sh
 （`linux-headers-$(uname -r)` / `proxmox-headers-$(uname -r)`、`make`、`gcc`、`dkms`），
 `--no-deps` 可关闭。任何系统也可以 `--userspace` 强制用户态。不过用户态实现要能通过
 `/dev/mem` 映射隐藏的 P2SB 窗口：内核开了 `CONFIG_IO_STRICT_DEVMEM`、ACPI 又把
-`INTC3000` 区间标成独占时（Debian 13 / PVE 的内核就是这样），这个 mmap 会被拒绝，
-`--userspace` 会在改动现有安装**之前**预检并退出。两种实现驱动
+`INTC3000` 区间标成独占时（Debian 13 / PVE 的内核就是这样），这个 mmap 会被拒绝。
+此时在内核命令行加 `iomem=relaxed` 即可放行（Debian/PVE）：
+
+```sh
+sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 iomem=relaxed"/' /etc/default/grub
+sudo update-grub && sudo reboot
+```
+
+`--userspace` 会在改动现有安装**之前**预检，映射不通就退出；不加 `iomem=relaxed`
+的 Debian/PVE 用默认的模块模式即可。两种实现驱动
 同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
 
 | | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
@@ -252,7 +260,7 @@ vep1400: GE3 link up (1G)
 | 某口只到 100M | `vep1400-linkdiag.sh <n>` 看对端是否宣告 1000BASE-T；多半是网线或对端口 |
 | `unexpected switch id` | SMI 失步。模块模式看 `dmesg \| grep P2SB` 后传 `p2sb_bar_addr=`；用户态模式确认 `/proc/iomem` 里有 `INTC3000` |
 | 内核升级后失效 | 只有模块模式会这样：`dkms status`、`journalctl -u dkms` |
-| `--userspace` 被拒绝，提示 P2SB / mmap EPERM | 内核的 `CONFIG_IO_STRICT_DEVMEM` 不允许 `/dev/mem` 映射 ACPI 独占的 P2SB 窗口；用默认的模块模式（或自编内核关掉该选项） |
+| `--userspace` 被拒绝，提示 P2SB / mmap EPERM | 内核的 `CONFIG_IO_STRICT_DEVMEM` 不允许 `/dev/mem` 映射 ACPI 独占的 P2SB 窗口；在 GRUB 加 `iomem=relaxed` 并重启，或改用默认的模块模式 |
 
 ## 硬件
 
