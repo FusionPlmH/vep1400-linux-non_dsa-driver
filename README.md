@@ -34,9 +34,9 @@ ACPI/DT 描述。为一块板让每个发行版重编内核不现实，所以这
 
 ### ① 先把管理通道弄好
 
-装驱动要下内核头和编译包（`install.sh` 会用 `apt-get` 自动补齐），而加载驱动会短暂打断
-`GE*` 口。这块板只有一个管理面、纯被动
-散热，**无线是最省事的选择**；不要把某个 GE 口当作安装期间唯一的管理口。
+模块模式要下载内核头文件和编译工具链（`install.sh` 会用 `apt-get` 自动补齐）；而且
+无论哪种实现，加载驱动都会短暂打断 `GE*` 口。这块板只有一个管理面、纯被动散热，
+**无线是最省事的选择** —— 不要把某个 GE 口当作安装期间唯一的管理口。
 
 **VyOS** —— `name-server` 这句别漏，VyOS 默认不配 DNS，缺了它 `ping deb.debian.org`
 一定失败，而 `ping 1.1.1.1` 却是通的：
@@ -81,6 +81,7 @@ network:
       dhcp4: true
 ```
 
+> [!TIP]
 > 配置里的 `wlp2s0` 换成实际的无线网卡名，`ip -br link` 可查。
 
 ### ② 确认真的能上网
@@ -112,14 +113,32 @@ sudo ./install.sh
 | *（无）* | 按系统自动选择：Debian/Ubuntu/PVE → 内核模块 + DKMS，VyOS → 用户态 |
 | `--userspace` | 强制用户态实现：不编译、不污染内核 |
 | `--module` | 强制内核模块（VyOS 上会被拒绝） |
-| `--no-deps` | 不自动补装编译依赖：内核头文件、`make`/`gcc`、`dkms`（离线环境用） |
-| `--no-relax-iomem` | 用户态模式：不要自动往 GRUB 加 `iomem=relaxed` |
-| `--initramfs` | 模块同时进 initramfs（加密根分区、fsck 慢的场景） |
-| `--no-dkms` | 只针对当前内核编译 |
+| `--no-deps` | 模块模式：不自动补装内核头文件、`make`/`gcc`、`dkms`（离线环境用） |
+| `--no-dkms` | 模块模式：只针对当前内核编译 |
+| `--initramfs` | 模块模式：模块同时进 initramfs（加密根分区、fsck 慢的场景） |
+| `--no-relax-iomem` | 用户态模式：不自动往 GRUB 加 `iomem=relaxed` |
 | `--no-start` | 装好并 enable，但本次不启动 |
 | `--force` | 就地替换已装的另一种实现 |
 
-卸载：`sudo ./uninstall.sh` —— 模块、`/usr` 下的用户态文件、VyOS 的 `/config` 文件一起清。
+### ④ 卸载 / 切换
+
+```sh
+sudo ./uninstall.sh
+```
+
+模块、`/usr` 下的用户态文件、VyOS 的 `/config` 文件一起清。要换一种实现：
+
+```sh
+sudo ./uninstall.sh && sudo ./install.sh --userspace   # 或者 --module
+```
+
+也可以直接 `sudo ./install.sh --userspace --force` 就地替换。两种实现**不能混装**，
+`install.sh` 会拒绝。由 `--userspace` 自动写进 GRUB 的 `iomem=relaxed` 不会被卸载
+脚本移除，不需要时手动还原：
+
+```sh
+sudo cp -a /etc/default/grub.vep1400.bak /etc/default/grub && sudo update-grub
+```
 
 ## 系统与实现
 
@@ -128,25 +147,29 @@ sudo ./install.sh
 | Debian 13 | 内核模块 | `linux-headers-$(uname -r)` + `dkms` | ✅ 实测（13.7 / 内核 6.12） |
 | Debian 12 | 内核模块 | 同上 | 待实测（内核 6.1） |
 | Ubuntu 22.04 / 24.04 | 内核模块 | 同上 | 待实测（内核 5.15 / 6.8） |
-| Proxmox VE 8 / 9 | 内核模块 | `proxmox-headers-$(uname -r)`（8.0/8.1 为 `pve-headers-`）+ `dkms` | 待实测 |
+| Proxmox VE 8 / 9 | 内核模块 | `proxmox-headers-$(uname -r)` + `dkms` | 待实测 |
 | VyOS 1.3.4 | 用户态 | `python3` + 可读 `/dev/mem` | ✅ 实测（1.3.4 / 内核 5.4.261） |
 | 其它 systemd 发行版 | 用户态 | 同上 | 未实测 |
 
-`install.sh` 按上表自动选择；模块模式下缺什么就先用 `apt-get` 补什么
-（`linux-headers-$(uname -r)` / `proxmox-headers-$(uname -r)`、`make`、`gcc`、`dkms`），
-`--no-deps` 可关闭。任何系统也可以 `--userspace` 强制用户态。不过用户态实现要能通过
-`/dev/mem` 映射隐藏的 P2SB 窗口：内核开了 `CONFIG_IO_STRICT_DEVMEM`、ACPI 又把
-`INTC3000` 区间标成独占时（Debian 13 / PVE 的内核就是这样），这个 mmap 会被拒绝。
-`--userspace` 会在改动现有安装**之前**预检，检测到这种拒绝就自动把 `iomem=relaxed`
-写进 `/etc/default/grub`（备份 `/etc/default/grub.vep1400.bak`）、执行 `update-grub`，
-本次先不启动服务并提示重启；重启后 userspace 才会起来。不想让脚本碰 GRUB 就加
-`--no-relax-iomem`，它只打印手动步骤后退出（手动做法是在 `GRUB_CMDLINE_LINUX_DEFAULT`
-里追加 `iomem=relaxed`，再 `update-grub` 并重启）。不加这个参数的 Debian/PVE 直接用
-默认的模块模式即可。
+PVE 8.0/8.1 的头包还叫 `pve-headers-`，8.2 起改名为 `proxmox-headers-`，安装脚本两种都会试。
 
-`iomem=relaxed` 会放宽内核对 `/dev/mem` 的严格检查，只在确实要用用户态时启用。
-两种实现驱动
-同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
+`install.sh` 按上表自动选择实现：
+
+- **内核模块** —— 缺什么就先用 `apt-get` 补什么：内核头文件、`make`/`gcc`、
+  `dkms`（`--no-deps` 关闭）
+- **用户态** —— 开机用 Python 写一遍寄存器，不需要编译；但它要通过 `/dev/mem`
+  映射被固件隐藏的 P2SB 窗口。Debian 13 / PVE 的内核开了 `CONFIG_IO_STRICT_DEVMEM`、
+  ACPI 又把 `INTC3000` 区间标成独占，默认映射会被拒绝。`--userspace` 会在改动现有
+  安装**之前**预检：发现被拒就自动把 `iomem=relaxed` 写进 `/etc/default/grub`
+  （备份 `/etc/default/grub.vep1400.bak`）、执行 `update-grub`，本次不启动服务并
+  提示重启，重启后 userspace 才生效。不想让脚本碰 GRUB 就加 `--no-relax-iomem`，
+  它只打印手动步骤后退出。
+
+> [!WARNING]
+> `iomem=relaxed` 会放宽内核对 `/dev/mem` 的严格检查（System RAM 仍受保护），
+> 只在确实要用用户态时启用；用模块模式则完全不需要它。
+
+两种实现驱动同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
 
 | | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
 |---|---|---|
@@ -155,6 +178,7 @@ sudo ./install.sh
 | X553 速率档位 | 可写 | 写不了（本机不需要） |
 | 内核污点 | 有 | 无 |
 
+> [!NOTE]
 > 硬件只支持 **Dell VEP1400 / VMware SD-WAN Edge 610 非 X（Atom C3308）**。
 > Edge 610X / VEP1400-X 用的是 C3558，交换机配置不同，本版本不支持。
 
@@ -174,9 +198,10 @@ sudo ./install.sh
 | SFP1 | — | 无标签 | `SFP1` | 05:00.1（内核名） |
 | SFP2 | — | 无标签 | `SFP2` | 05:00.0（内核名） |
 
-上行口本身**永远不要配地址** —— Debian / Ubuntu / PVE 上是 `eno1` / `eno2`
-（03:00.0 / 03:00.1），VyOS 上是 `eth0` / `eth1`。`GE*` 的 MAC 取自对应上行口并加偏移
-（`+0x0a`…`+0x0f`），保证唯一。
+> [!IMPORTANT]
+> 上行口本身**永远不要配地址** —— Debian / Ubuntu / PVE 上是 `eno1` / `eno2`
+> （03:00.0 / 03:00.1），VyOS 上是 `eth0` / `eth1`。`GE*` 的 MAC 取自对应上行口
+> 并加偏移（`+0x0a`…`+0x0f`），保证唯一。
 
 VyOS 上 SFP 口没有 vif，用的是内核名，**重启前后会变**（本机实测 `eth2`/`eth3` 和
 `eno3`/`eno4` 都出现过），按上表的 PCI 地址认：`ip -br link` 或

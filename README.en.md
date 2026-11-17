@@ -40,11 +40,11 @@ Tested on real hardware: all six ports negotiate 1000 Mb/s (Debian 13 and VyOS
 
 ### 1. Get a management path first
 
-Installing needs kernel headers and build packages (`install.sh` apt-installs
-what is missing), and loading the driver briefly disturbs
-the GE ports. This board has a single management plane and is passively cooled,
-so **Wi-Fi is the easiest choice**; never make a GE port your only management
-link during the install.
+Module mode needs kernel headers and build packages (`install.sh`
+apt-installs what is missing), and either implementation briefly disturbs the
+GE ports while loading. This board has a single management plane and is
+passively cooled, so **Wi-Fi is the easiest choice** — never make a GE port
+your only management link during the install.
 
 **VyOS** — do not skip `name-server`, VyOS ships without DNS, so
 `ping deb.debian.org` fails while `ping 1.1.1.1` works:
@@ -90,6 +90,7 @@ network:
       dhcp4: true
 ```
 
+> [!TIP]
 > Replace `wlp2s0` with your actual wireless interface name — `ip -br link`
 > lists them.
 
@@ -124,15 +125,34 @@ sudo ./install.sh
 | *(none)* | auto-select: Debian/Ubuntu/PVE → kernel module + DKMS, VyOS → userspace |
 | `--userspace` | force the userspace implementation: nothing compiled, no kernel taint |
 | `--module` | force the kernel module (refused on VyOS) |
-| `--no-deps` | do not apt install the build dependencies: kernel headers, `make`/`gcc`, `dkms` (offline use) |
+| `--no-deps` | module mode: do not apt install kernel headers, `make`/`gcc`, `dkms` (offline use) |
+| `--no-dkms` | module mode: build for the running kernel only |
+| `--initramfs` | module mode: also load the module from the initramfs (encrypted root, slow fsck) |
 | `--no-relax-iomem` | userspace mode: do not add `iomem=relaxed` to the kernel command line |
-| `--initramfs` | also load the module from the initramfs (encrypted root, slow fsck) |
-| `--no-dkms` | build for the running kernel only |
 | `--no-start` | install and enable, do not start now |
 | `--force` | replace the other implementation in place |
 
-Uninstall: `sudo ./uninstall.sh` — removes the module, the userspace files under
-`/usr`, and the VyOS files under `/config`.
+### 4. Uninstall / switching
+
+```sh
+sudo ./uninstall.sh
+```
+
+Removes the module, the userspace files under `/usr`, and the VyOS files under
+`/config`. To switch implementations:
+
+```sh
+sudo ./uninstall.sh && sudo ./install.sh --userspace   # or --module
+```
+
+or simply `sudo ./install.sh --userspace --force` to replace the other one in
+place. The two must never be mixed — `install.sh` refuses to. `iomem=relaxed`
+added by `--userspace` is not removed by the uninstall script; revert it by
+hand when you no longer want it:
+
+```sh
+sudo cp -a /etc/default/grub.vep1400.bak /etc/default/grub && sudo update-grub
+```
 
 ## Systems and implementations
 
@@ -141,29 +161,34 @@ Uninstall: `sudo ./uninstall.sh` — removes the module, the userspace files und
 | Debian 13 | kernel module | `linux-headers-$(uname -r)` + `dkms` | ✅ tested (13.7 / kernel 6.12) |
 | Debian 12 | kernel module | same | not tested yet (kernel 6.1) |
 | Ubuntu 22.04 / 24.04 | kernel module | same | not tested yet (kernel 5.15 / 6.8) |
-| Proxmox VE 8 / 9 | kernel module | `proxmox-headers-$(uname -r)` (`pve-headers-` on 8.0/8.1) + `dkms` | not tested yet |
+| Proxmox VE 8 / 9 | kernel module | `proxmox-headers-$(uname -r)` + `dkms` | not tested yet |
 | VyOS 1.3.4 | userspace | `python3` + readable `/dev/mem` | ✅ tested (1.3.4 / kernel 5.4.261) |
 | other systemd distributions | userspace | same | untested |
 
-`install.sh` follows the table above and, in module mode, installs whatever is
-missing with `apt-get` first (`linux-headers-$(uname -r)` /
-`proxmox-headers-$(uname -r)`, `make`, `gcc`, `dkms`); `--no-deps` turns that
-off. Any system can still force the userspace implementation with
-`--userspace`, but it has to map the hidden P2SB window through `/dev/mem`,
-which kernels built with `CONFIG_IO_STRICT_DEVMEM` refuse once ACPI marks the
-`INTC3000` range exclusive (the Debian 13 / PVE kernel does). `--userspace`
-probes this **before** touching an existing install; when the mapping is
-refused it adds `iomem=relaxed` to `/etc/default/grub` (backup:
-`/etc/default/grub.vep1400.bak`), runs `update-grub`, installs without
-starting the service and asks for a reboot. `--no-relax-iomem` keeps the
-bootloader untouched and only prints the manual steps. Without
-`iomem=relaxed`, use the default module mode on Debian / PVE.
+PVE 8.0/8.1 still called the package `pve-headers-`; 8.2 renamed it to
+`proxmox-headers-` — the installer tries both.
 
-`iomem=relaxed` relaxes the kernel's strict `/dev/mem` checks; only enable it
-when you actually want the userspace implementation. Both drive the same
-register sequences and
-reach the same speed, but use **one per machine** — `install.sh` refuses to mix
-them:
+`install.sh` follows the table above:
+
+- **kernel module** — installs whatever is missing with `apt-get` first: the
+  kernel headers, `make`/`gcc`, `dkms` (`--no-deps` turns that off)
+- **userspace** — a Python script writes the registers once at boot, nothing
+  compiled. It must map the firmware-hidden P2SB window through `/dev/mem`,
+  which Debian 13 / PVE kernels refuse (`CONFIG_IO_STRICT_DEVMEM` plus an
+  ACPI-exclusive `INTC3000` range). `--userspace` probes this **before**
+  touching an existing install: when the mapping is refused it adds
+  `iomem=relaxed` to `/etc/default/grub` (backup:
+  `/etc/default/grub.vep1400.bak`), runs `update-grub`, installs without
+  starting the service and asks for a reboot. `--no-relax-iomem` keeps the
+  bootloader untouched and only prints the manual steps.
+
+> [!WARNING]
+> `iomem=relaxed` relaxes the kernel's strict `/dev/mem` checks (System RAM
+> stays protected). Enable it only when you actually want the userspace
+> implementation; the module mode needs nothing of the sort.
+
+Both drive the same register sequences and reach the same speed, but use **one
+per machine** — `install.sh` refuses to mix them:
 
 | | kernel module `vep1400.ko` | userspace `vep1400-userspace.py` |
 |---|---|---|
@@ -172,6 +197,7 @@ them:
 | X553 speed strap | programmable | not programmable (not needed on this board) |
 | Kernel taint | yes | no |
 
+> [!NOTE]
 > Hardware support is limited to the **Dell VEP1400 / VMware SD-WAN Edge 610
 > non-X (Atom C3308)**. The Edge 610X / VEP1400-X uses a C3558 and a different
 > switch configuration, which this version does not handle.
@@ -193,9 +219,12 @@ SFP cages keep whatever name the kernel gave them on both.
 | SFP1 | — | untagged | `SFP1` | 05:00.1 (kernel name) |
 | SFP2 | — | untagged | `SFP2` | 05:00.0 (kernel name) |
 
-**Never** address the uplinks themselves: `eno1` / `eno2` on Debian / Ubuntu /
-PVE (03:00.0 / 03:00.1), `eth0` / `eth1` on VyOS. `GE*` inherit their uplink's
-MAC plus a per-port offset (`+0x0a`…`+0x0f`). On VyOS the SFP cages have no vif
+> [!IMPORTANT]
+> **Never** address the uplinks themselves: `eno1` / `eno2` on Debian / Ubuntu /
+> PVE (03:00.0 / 03:00.1), `eth0` / `eth1` on VyOS. `GE*` inherit their uplink's
+> MAC plus a per-port offset (`+0x0a`…`+0x0f`).
+
+On VyOS the SFP cages have no vif
 and keep a kernel name that **changes between boots** (`eth2`/`eth3` and
 `eno3`/`eno4` were both seen on this unit) — go by the PCI address above,
 `ip -br link` or `/sys/class/net/*/device` tells you which is which.

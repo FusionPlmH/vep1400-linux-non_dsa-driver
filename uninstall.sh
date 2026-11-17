@@ -55,4 +55,17 @@ if [ -f /config/scripts/vyos-postconfig-bootup.script ] &&
 	echo "removed /config/scripts/vyos-postconfig-bootup.script"
 fi
 
+# install.sh --userspace may have added iomem=relaxed to /etc/default/grub.
+# The backup is left for the user to decide; just point at it.
+if [ -f /etc/default/grub.vep1400.bak ]; then
+	cat <<'EOF'
+
+note: the pre-iomem=relaxed GRUB backup is still at
+      /etc/default/grub.vep1400.bak. To drop iomem=relaxed from the kernel
+      command line:
+          cp -a /etc/default/grub.vep1400.bak /etc/default/grub && update-grub
+      otherwise it stays in place and is harmless.
+EOF
+fi
+
 echo "removed. ixgbe is untouched; reboot to return to the stock setup."
