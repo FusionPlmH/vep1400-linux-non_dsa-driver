@@ -108,7 +108,12 @@ ping -c1 deb.debian.org     # resolves and replies -> link, route and DNS are fi
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
-wget -qO- https://neodev.team/get.sh | sudo bash                     # mirror, if GitHub is unreachable
+```
+
+Use the mirror instead when GitHub is unreachable — pick **one**, never both:
+
+```sh
+wget -qO- https://neodev.team/get.sh | sudo bash
 ```
 
 To pass an option, append `-s -- <option>` after `bash` (see the table below).

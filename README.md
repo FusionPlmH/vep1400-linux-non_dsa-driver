@@ -97,7 +97,12 @@ ping -c1 deb.debian.org     # 域名能通 → 链路、路由、DNS 都正常
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FusionPlmH/vep1400-linux-non_dsa-driver/main/get.sh | sudo bash
-wget -qO- https://neodev.team/get.sh | sudo bash                     # GitHub 不通时走镜像
+```
+
+GitHub 连不上时走镜像 —— **二选一**，不要两个都跑：
+
+```sh
+wget -qO- https://neodev.team/get.sh | sudo bash
 ```
 
 要加参数就在 `bash` 后面接 `-s -- <选项>`（见下表）。用 git 也一样：
