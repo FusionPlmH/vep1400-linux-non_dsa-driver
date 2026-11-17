@@ -155,6 +155,51 @@ if [ "$DRY" -eq 1 ]; then
 	exit 1
 fi
 
+# The userspace tool drives the switch through /dev/mem. Kernels built with
+# CONFIG_IO_STRICT_DEVMEM refuse to map the hidden P2SB window because ACPI
+# marks the INTC3000 range exclusive (Debian 13 does), so probe before taking
+# a working module installation apart.
+userspace_mmap_probe() {
+	python3 - <<'PY'
+import mmap, os, sys
+
+NORTH_OFF = 0x00C20000
+NORTH_LEN = 0x10000
+
+start = None
+try:
+    with open("/proc/iomem") as f:
+        for line in f:
+            if "INTC3000" not in line:
+                continue
+            try:
+                lo, hi = (int(x, 16) for x in line.split()[0].split("-"))
+            except ValueError:
+                continue
+            if hi - lo + 1 != NORTH_LEN:
+                continue
+            if (lo - NORTH_OFF) & 0xFFFFFF:
+                continue
+            start = lo
+            break
+except OSError as exc:
+    sys.exit("cannot read /proc/iomem: %s" % exc)
+
+if start is None:
+    sys.exit("P2SB window not found in /proc/iomem")
+
+try:
+    fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
+    mmap.mmap(fd, NORTH_LEN, mmap.MAP_SHARED,
+              mmap.PROT_READ | mmap.PROT_WRITE, offset=start)
+except PermissionError:
+    sys.exit("kernel refuses to mmap /dev/mem at 0x%x (CONFIG_IO_STRICT_DEVMEM, "
+             "ACPI-exclusive INTC3000 range)" % start)
+except OSError as exc:
+    sys.exit("mmap /dev/mem at 0x%x failed: %s" % (start, exc))
+PY
+}
+
 if [ "$MODE" = module ]; then
 	KVER=$(uname -r)
 	if [ "$AUTO_DEPS" -eq 1 ]; then
@@ -183,6 +228,17 @@ else
 		echo "       (CONFIG_DEVMEM=y, CONFIG_STRICT_DEVMEM allows MMIO)" >&2
 		exit 1
 	}
+	if [ "${VEP1400_SKIP_DEVMEM_PROBE:-0}" = 1 ]; then
+		echo "   note: skipping the /dev/mem preflight (VEP1400_SKIP_DEVMEM_PROBE=1)" >&2
+	elif ! probe_msg=$(userspace_mmap_probe 2>&1); then
+		cat >&2 <<EOF
+ERROR: --userspace cannot work on this kernel: $probe_msg
+       Nothing was changed; use the kernel module on this system:
+           $0 --module --force
+       (VEP1400_SKIP_DEVMEM_PROBE=1 overrides this preflight.)
+EOF
+		exit 1
+	fi
 fi
 
 # ---------------------------------------------------------------------------

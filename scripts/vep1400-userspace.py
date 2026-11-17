@@ -159,9 +159,16 @@ class Smi(object):
         self.verbose = verbose
         self.bar = find_p2sb()
         self.fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
-        self.north = mmap.mmap(self.fd, P2SB_NORTH_LEN, mmap.MAP_SHARED,
-                               mmap.PROT_READ | mmap.PROT_WRITE,
-                               offset=self.bar + P2SB_NORTH_OFF)
+        try:
+            self.north = mmap.mmap(self.fd, P2SB_NORTH_LEN, mmap.MAP_SHARED,
+                                   mmap.PROT_READ | mmap.PROT_WRITE,
+                                   offset=self.bar + P2SB_NORTH_OFF)
+        except PermissionError:
+            os.close(self.fd)
+            raise Error("/dev/mem cannot map the P2SB window at 0x%x: the "
+                        "kernel blocks it with CONFIG_IO_STRICT_DEVMEM, use "
+                        "the kernel module instead"
+                        % (self.bar + P2SB_NORTH_OFF))
         self.padbar = struct.unpack_from("<I", self.north, 0x0C)[0]
         if self.padbar >= P2SB_NORTH_LEN:
             raise Error("P2SB north window not decodable (padbar 0x%x)"
