@@ -16,6 +16,8 @@
 #   --no-start     install and enable, do not start now (reboot to use)
 #   --no-dkms      module mode: build for the running kernel only
 #   --no-deps      module mode: do not apt install missing build dependencies
+#   --no-relax-iomem  userspace mode: do not add iomem=relaxed to the kernel
+#                  command line when /dev/mem is blocked
 #   --initramfs    module mode: also load the module from the initramfs
 #   --force        replace a previously installed version of the other mode
 #   --dry-run      VyOS: only print what would be done
@@ -36,6 +38,8 @@ START=1
 USE_DKMS=1
 USE_INITRAMFS=0
 AUTO_DEPS=1
+RELAX_IOMEM=1
+REBOOT_REQUIRED=0
 FORCE=0
 DRY=0
 for arg in "$@"; do
@@ -45,6 +49,7 @@ for arg in "$@"; do
 	--no-start) START=0 ;;
 	--no-dkms) USE_DKMS=0 ;;
 	--no-deps) AUTO_DEPS=0 ;;
+	--no-relax-iomem) RELAX_IOMEM=0 ;;
 	--initramfs) USE_INITRAMFS=1 ;;
 	--force) FORCE=1 ;;
 	--dry-run) DRY=1 ;;
@@ -132,7 +137,7 @@ EOF
 	fi
 
 	echo "detected VyOS: userspace implementation only"
-	for opt in --no-start --no-dkms --no-deps --initramfs; do
+	for opt in --no-start --no-dkms --no-deps --no-relax-iomem --initramfs; do
 		case " $* " in
 		*" $opt "*) echo "   note: $opt does not apply on VyOS" >&2 ;;
 		esac
@@ -200,6 +205,45 @@ except OSError as exc:
 PY
 }
 
+# Add iomem=relaxed to the GRUB command line. Returns 0 when grub.cfg carries
+# the parameter; the caller then has to ask for a reboot.
+add_iomem_relaxed() {
+	local grub=/etc/default/grub
+	local backup=/etc/default/grub.vep1400.bak
+	local ug edited=0
+
+	[ -f "$grub" ] || return 1
+	if command -v update-grub >/dev/null 2>&1; then
+		ug=$(command -v update-grub)
+	elif [ -x /usr/sbin/update-grub ]; then
+		ug=/usr/sbin/update-grub
+	else
+		return 1
+	fi
+
+	if ! grep -q 'iomem=relaxed' "$grub"; then
+		[ -f "$backup" ] || cp -a "$grub" "$backup"
+		if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub"; then
+			sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)"/\1 iomem=relaxed"/' "$grub"
+		else
+			sed -i 's/^\(GRUB_CMDLINE_LINUX="[^"]*\)"/\1 iomem=relaxed"/' "$grub"
+		fi
+		if ! grep -q 'iomem=relaxed' "$grub"; then
+			echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT iomem=relaxed"' >>"$grub"
+		fi
+		edited=1
+	fi
+
+	if ! "$ug" >/dev/null 2>&1; then
+		[ "$edited" -eq 1 ] && cp -a "$backup" "$grub"
+		return 1
+	fi
+	if [ -f /boot/grub/grub.cfg ] && ! grep -q 'iomem=relaxed' /boot/grub/grub.cfg; then
+		return 1
+	fi
+	return 0
+}
+
 if [ "$MODE" = module ]; then
 	KVER=$(uname -r)
 	if [ "$AUTO_DEPS" -eq 1 ]; then
@@ -231,17 +275,41 @@ else
 	if [ "${VEP1400_SKIP_DEVMEM_PROBE:-0}" = 1 ]; then
 		echo "   note: skipping the /dev/mem preflight (VEP1400_SKIP_DEVMEM_PROBE=1)" >&2
 	elif ! probe_msg=$(userspace_mmap_probe 2>&1); then
-		cat >&2 <<EOF
+		case "$probe_msg" in
+		*CONFIG_IO_STRICT_DEVMEM*)
+			if [ "$RELAX_IOMEM" -eq 1 ] && add_iomem_relaxed; then
+				REBOOT_REQUIRED=1
+				cat >&2 <<EOF
+== /dev/mem is blocked by CONFIG_IO_STRICT_DEVMEM
+   added iomem=relaxed to /etc/default/grub (backup:
+   /etc/default/grub.vep1400.bak) and ran update-grub. The userspace
+   service is installed but not started; it comes up after a reboot.
+EOF
+			else
+				cat >&2 <<EOF
 ERROR: --userspace cannot work on this kernel: $probe_msg
        CONFIG_IO_STRICT_DEVMEM forbids mapping the firmware-hidden P2SB
        window. Boot with iomem=relaxed to allow it, e.g. on Debian / PVE:
            GRUB_CMDLINE_LINUX_DEFAULT="quiet iomem=relaxed"  # /etc/default/grub
            update-grub && reboot
+       (rerun without --no-relax-iomem to let this script do it)
        or use the kernel module on this system:
            $0 --module --force
        (VEP1400_SKIP_DEVMEM_PROBE=1 overrides this preflight.)
 EOF
-		exit 1
+				exit 1
+			fi
+			;;
+		*)
+			cat >&2 <<EOF
+ERROR: --userspace cannot work on this kernel: $probe_msg
+       Nothing was changed; use the kernel module on this system:
+           $0 --module --force
+       (VEP1400_SKIP_DEVMEM_PROBE=1 overrides this preflight.)
+EOF
+			exit 1
+			;;
+		esac
 	fi
 fi
 
@@ -328,6 +396,11 @@ else
 	rm -f "$LIB_DIR/vep1400-initramfs"
 fi
 
+if [ "$REBOOT_REQUIRED" -eq 1 ]; then
+	# iomem=relaxed is not active yet, starting the service now would fail.
+	START=0
+fi
+
 systemctl daemon-reload
 systemctl enable vep1400.service vep1400-net.service
 
@@ -365,3 +438,12 @@ they are the internal switch uplinks.
 To switch implementation:  ./uninstall.sh && ./install.sh [--userspace]
 Reboot once to verify that everything comes up on its own.
 EOF
+
+if [ "$REBOOT_REQUIRED" -eq 1 ]; then
+	cat <<EOF
+
+Reboot required: iomem=relaxed only takes effect after a reboot, and the
+userspace service starts at boot. To undo the boot change:
+    cp -a /etc/default/grub.vep1400.bak /etc/default/grub && update-grub
+EOF
+fi

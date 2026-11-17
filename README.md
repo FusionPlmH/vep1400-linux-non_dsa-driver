@@ -113,6 +113,7 @@ sudo ./install.sh
 | `--userspace` | 强制用户态实现：不编译、不污染内核 |
 | `--module` | 强制内核模块（VyOS 上会被拒绝） |
 | `--no-deps` | 不自动补装编译依赖：内核头文件、`make`/`gcc`、`dkms`（离线环境用） |
+| `--no-relax-iomem` | 用户态模式：不要自动往 GRUB 加 `iomem=relaxed` |
 | `--initramfs` | 模块同时进 initramfs（加密根分区、fsck 慢的场景） |
 | `--no-dkms` | 只针对当前内核编译 |
 | `--no-start` | 装好并 enable，但本次不启动 |
@@ -136,17 +137,15 @@ sudo ./install.sh
 `--no-deps` 可关闭。任何系统也可以 `--userspace` 强制用户态。不过用户态实现要能通过
 `/dev/mem` 映射隐藏的 P2SB 窗口：内核开了 `CONFIG_IO_STRICT_DEVMEM`、ACPI 又把
 `INTC3000` 区间标成独占时（Debian 13 / PVE 的内核就是这样），这个 mmap 会被拒绝。
-此时在内核命令行加 `iomem=relaxed` 即可放行（Debian/PVE）：
+`--userspace` 会在改动现有安装**之前**预检，检测到这种拒绝就自动把 `iomem=relaxed`
+写进 `/etc/default/grub`（备份 `/etc/default/grub.vep1400.bak`）、执行 `update-grub`，
+本次先不启动服务并提示重启；重启后 userspace 才会起来。不想让脚本碰 GRUB 就加
+`--no-relax-iomem`，它只打印手动步骤后退出（手动做法是在 `GRUB_CMDLINE_LINUX_DEFAULT`
+里追加 `iomem=relaxed`，再 `update-grub` 并重启）。不加这个参数的 Debian/PVE 直接用
+默认的模块模式即可。
 
-```sh
-sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 iomem=relaxed"/' /etc/default/grub
-sudo update-grub && sudo reboot
-```
-
-（`iomem=relaxed` 会放宽内核对 `/dev/mem` 的严格检查，只在你确实要用用户态时加。）
-
-`--userspace` 会在改动现有安装**之前**预检，映射不通就退出；不加 `iomem=relaxed`
-的 Debian/PVE 用默认的模块模式即可。两种实现驱动
+`iomem=relaxed` 会放宽内核对 `/dev/mem` 的严格检查，只在确实要用用户态时启用。
+两种实现驱动
 同一套寄存器、效果一致，但**一台机器只用一种**，混装会被拒绝：
 
 | | 内核模块 `vep1400.ko` | 用户态 `vep1400-userspace.py` |
@@ -262,7 +261,7 @@ vep1400: GE3 link up (1G)
 | 某口只到 100M | `vep1400-linkdiag.sh <n>` 看对端是否宣告 1000BASE-T；多半是网线或对端口 |
 | `unexpected switch id` | SMI 失步。模块模式看 `dmesg \| grep P2SB` 后传 `p2sb_bar_addr=`；用户态模式确认 `/proc/iomem` 里有 `INTC3000` |
 | 内核升级后失效 | 只有模块模式会这样：`dkms status`、`journalctl -u dkms` |
-| `--userspace` 被拒绝，提示 P2SB / mmap EPERM | 内核的 `CONFIG_IO_STRICT_DEVMEM` 不允许 `/dev/mem` 映射 ACPI 独占的 P2SB 窗口；在 GRUB 加 `iomem=relaxed` 并重启，或改用默认的模块模式 |
+| `--userspace` 被拒绝，提示 P2SB / mmap EPERM | 内核的 `CONFIG_IO_STRICT_DEVMEM` 不允许 `/dev/mem` 映射 ACPI 独占的 P2SB 窗口；脚本默认会自动加 `iomem=relaxed` 并提示重启（`--no-relax-iomem` 可关闭），或用默认的模块模式 |
 
 ## 硬件
 
