@@ -295,6 +295,7 @@ systemd/             vep1400.service、vep1400-net.service（+ 用户态变体�
 modprobe/            softdep 与默认参数
 initramfs/           可选的提前加载钩子
 vyos/                VyOS 安装脚本 + 开机钩子
+.github/workflows/   推送后通知 neodev.team 刷新镜像（无 token 时由站点每日 cron 兜底）
 install.sh           一个入口：默认模块，--userspace 走用户态
 get.sh               免 git 的一行命令安装（GitHub 与镜像共用同一个脚本）
 ```
